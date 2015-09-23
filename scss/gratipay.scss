@@ -22,22 +22,23 @@
 @import "elements/buttons-knobs";
 @import "elements/elements";
 
+@import "components/banner";
 @import "components/chart";
 @import "components/chosen";
 @import "components/communities";
 @import "components/cta";
 @import "components/dropdown";
 @import "components/emails";
-@import "components/feedback";
 @import "components/js-edit";
-@import "components/leaderboard";
 @import "components/linear_gradient";
 @import "components/loading-indicators";
 @import "components/memberships";
 @import "components/nav";
 @import "components/payments-by";
 @import "components/profile-statement";
+@import "components/sidebar";
 @import "components/sign_in";
+@import "components/status-icon";
 @import "components/support_gratipay";
 @import "components/table";
 @import "components/tip-distribution";
@@ -57,7 +58,7 @@
 @import "pages/history";
 @import "pages/team";
 @import "pages/profile-edit";
-@import "pages/subscriptions";
+@import "pages/giving";
 @import "pages/settings";
 @import "pages/cc-ba";
 @import "pages/on-confirm";

@@ -11,10 +11,32 @@ Gratipay.getCookie = function(key) {
 }
 
 Gratipay.init = function() {
+    Gratipay.warnOffUsersFromDeveloperConsole();
+    Gratipay.adaptToLongUsernames();
     Gratipay.forms.initCSRF();
     Gratipay.signIn();
     Gratipay.signOut();
     Gratipay.payments.initSupportGratipay();
+    Gratipay.tabs.init();
+};
+
+Gratipay.warnOffUsersFromDeveloperConsole = function() {
+    console.log("%cStop!", "color: red; font-weight: bold; font-size: 50px;");
+    console.log( "%cThis is a console for developers. If someone has asked you to open this "
+               + "window, they are likely trying to compromise your Gratipay account."
+               , "color: red;"
+                );
+    console.log("%cPlease close this window now.", "color: blue;");
+};
+
+Gratipay.adaptToLongUsernames = function() {
+    var h1 = $('#banner h1');
+    var nchars = h1.text().length;
+    if (nchars > 16)
+        h1.addClass('really-long');
+    else if (nchars > 8)
+        h1.addClass('long');
+    h1.show();
 };
 
 Gratipay.error = function(jqXHR, textStatus, errorThrown) {

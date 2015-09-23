@@ -3,7 +3,8 @@
 [![Build Status](http://img.shields.io/travis/gratipay/gratipay.com/master.svg)](https://travis-ci.org/gratipay/gratipay.com)
 [![Open Bounties](https://api.bountysource.com/badge/team?team_id=423&style=bounties_received)](https://www.bountysource.com/teams/gratipay/issues)
 
-[Gratipay](http://gratipay.com) is a weekly gift exchange, helping to create a culture of generosity.
+[Gratipay](http://gratipay.com) provides payments and payroll for open work,
+in order to cultivate an economy of gratitude, generosity, and love.
 If you'd like to learn more, check out <https://gratipay.com/about>.
 If you'd like to contribute to Gratipay, check out <http://inside.gratipay.com>.
 
@@ -61,7 +62,7 @@ $ docker run -p 8537:8537 gratipay
 Table of Contents
 =================
 
- - [Installation](#installation)
+ - [Installing](#installing)
   - [Dependencies](#dependencies)
   - [Building](#building)
   - [Launching](#launching)
@@ -69,7 +70,6 @@ Table of Contents
   - [Vagrant](#vagrant)
   - [Docker](#docker)
   - [Help!](#help)
- - [Configuration](https://github.com/gratipay/gratipay.com/wiki/Configuration)
  - [Modifying CSS](#modifying-css)
  - [Modifying the Database](#modifying-the-database)
  - [Testing](#testing-)
@@ -79,8 +79,8 @@ Table of Contents
  - [Glossary](#glossary)
 
 
-Installation
-============
+Installing
+==========
 
 Thanks for hacking on Gratipay! Be sure to review
 [CONTRIBUTING](https://github.com/gratipay/gratipay.com/blob/master/CONTRIBUTING.md#readme)
@@ -212,23 +212,24 @@ If you'd like to override some settings, create a file named `local.env` to stor
 
 The following explains some of the content of that file:
 
-The `BALANCED_API_SECRET` is a test marketplace. To generate a new secret for
-your own testing run this command:
-
-    curl -X POST https://api.balancedpayments.com/v1/api_keys | grep secret
-
-Grab that secret and also create a new marketplace to test against:
-
-    curl -X POST https://api.balancedpayments.com/v1/marketplaces -u <your_secret>:
-
-The site works without this, except for the credit card page. Visit the
-[Balanced Documentation](https://www.balancedpayments.com/docs) if you want to
-know more about creating marketplaces.
-
 The `GITHUB_*` keys are for a gratipay-dev application in the Gratipay
 organization on Github. It points back to localhost:8537, which is where
 Gratipay will be running if you start it locally with `make run`. Similarly
 with the `TWITTER_*` keys, but there they required us to spell it `127.0.0.1`.
+
+If you are running Gratipay somewhere other than `localhost:8537`, then you'll
+need to set `BASE_URL`, but your options are limited because we use proprietary
+fonts from [Typography.com](http://www.typography.com/), and they filter by
+`Referer`. You won't get the right fonts unless you use an approved domain.
+We've configured `gratipay.dev` as well as `localhost`, so if you don't want to
+run on `localhost` then configure `gratipay.dev` in your
+[`/etc/hosts`](https://en.wikipedia.org/wiki/Hosts_(file)) file and set this in
+`local.env`:
+
+    BASE_URL=http://gratipay.dev:8537
+    GITHUB_CLIENT_ID=ca4a9a35c161af1d024d
+    GITHUB_CLIENT_SECRET=8744f6333d51b5f4af38d46cf035ecfcf34c671e
+    GITHUB_CALLBACK=http://gratipay.dev:8537/on/github/associate
 
 If you wish to use a different username or database name for the database, you
 should override the `DATABASE_URL` in `local.env` using the following format:
@@ -322,9 +323,8 @@ $ docker kill [container_id]
 Help!
 -----
 
-If you get stuck somewhere along the way, you can find help in the #gratipay
-channel on [Freenode](http://webchat.freenode.net/) or in the [issue
-tracker](/gratipay/gratipay.com/issues/new) here on GitHub.
+If you get stuck somewhere along the way, [make an
+issue](https://github.com/gratipay/gratipay.com/issues/new) here on GitHub.
 
 Thanks for installing Gratipay! :smiley:
 
@@ -352,23 +352,34 @@ deployment.
 Testing [![Build Status](http://img.shields.io/travis/gratipay/gratipay.com/master.svg)](https://travis-ci.org/gratipay/gratipay.com)
 =======
 
-Please write unit tests for all new code and all code you change. Gratipay's
-test suite uses the py.test test runner, which will be installed into the
-virtualenv you get by running `make env`. As a rule of thumb, each test case
-should perform one assertion.
+Our test suite is divided into JavaScript tests and Python tests. The Python 
+part of the test suite is much more extensive than the JavaScript part. You need 
+to install [PhantomJS](http://phantomjs.org/) separately in order to run the 
+JavaScript tests. For Python we use the [pytest](http://pytest.org/) test runner; 
+it's installed automatically as part of `make env`.
 
-The easiest way to run the test suite is:
+The easiest way to run the whole test suite is:
 
     $ make test
+    
+You can also do:
 
-However, the test suite deletes data in all tables in the public schema of the
-database configured in your testing environment.
+    $ make jstest
+    
+and/or:
 
-To invoke py.test directly you should use the `honcho` utility that comes
+    $ make pytest
+    
+
+To invoke `py.test` directly you should use the `honcho` utility that comes 
 with the install. First `make tests/env`, activate the virtualenv and then:
 
     [gratipay] $ cd tests/
     [gratipay] $ honcho run -e defaults.env,local.env py.test
+
+Be careful! The test suite deletes data in all tables in the public schema of the
+database configured in your testing environment.
+
 
 Local Database Setup
 --------------------
@@ -379,7 +390,7 @@ version of Postgres to use is 9.3.5, because that's what we're using in
 production at Heroku. You need at least 9.2, because we depend on being able to
 specify a URI to `psql`, and that was added in 9.2.
 
-+ Mac: use Homerew: `brew install postgres`
++ Mac: use Homebrew: `brew install postgres`
 + Ubuntu: use Apt: `apt-get install postgresql postgresql-contrib libpq-dev`
 
 To setup the instance for gratipay's needs run:
@@ -411,7 +422,7 @@ some fake data, so that more of the site is functional, run this command:
 API
 ===
 
-The Gratipay API is comprised of these six endpoints:
+The Gratipay API is comprised of these four endpoints:
 
 **[/about/charts.json](https://gratipay.com/about/charts.json)**
 ([source](https://github.com/gratipay/gratipay.com/tree/master/www/about/charts.json.spt))&mdash;<i>public</i>&mdash;Returns
@@ -428,28 +439,12 @@ charts page used to use this.
 an object giving a point-in-time snapshot of Gratipay. The
 [stats](https://gratipay.com/about/stats.html) page displays the same info.
 
-**/`%username`/charts.json**
-([example](https://gratipay.com/Gratipay/charts.json),
-[source](https://github.com/gratipay/gratipay.com/tree/master/www/%25username/charts.json.spt))&mdash;<i>public</i>&mdash;Returns
-an array of objects, one per week, showing aggregate numbers over time for the
-given user.
-
 **/`%username`/public.json**
 ([example](https://gratipay.com/Gratipay/public.json),
 [source](https://github.com/gratipay/gratipay.com/tree/master/www/%25username/public.json.spt))&mdash;<i>public</i>&mdash;Returns an object with these keys:
 
-  - "receiving"&mdash;an estimate of the amount the given participant will
-    receive this week
-
-  - "my_tip"&mdash;logged-in user's tip to the Gratipay participant in
-    question; possible values are:
-
-      - `undefined` (key not present)&mdash;there is no logged-in user
-      - "self"&mdash;logged-in user is the participant in question
-      - `null`&mdash;user has never tipped this participant
-      - "0.00"&mdash;user used to tip this participant
-      - "3.00"&mdash;user tips this participant the given amount
-      <br><br>
+  - "taking"&mdash;an estimate of the amount the given participant will
+    take from Teams this week
 
   - "elsewhere"&mdash;participant's connected accounts elsewhere; returns an object with these keys:
 
@@ -466,34 +461,6 @@ given user.
           - `undefined` (key not present)&mdash;no OpenStreetMap account connected
           - `http://www.openstreetmap.org/user/%openstreetmap_username`
 
-
-**/`%username`/tips.json**
-([source](https://github.com/gratipay/gratipay.com/tree/master/www/%25username/tips.json.spt))&mdash;<i>private</i>&mdash;Responds
-to `GET` with an array of objects representing your current tips. `POST` the
-same structure back in order to update tips in bulk (be sure to set
-`Content-Type` to `application/json` instead of
-`application/x-www-form-urlencoded`). You can `POST` a partial array to update
-a subset of your tips. The response to a `POST` will be only the subset you
-updated. If the `amount` is `"error"` then there will also be an `error`
-attribute with a one-word error code. If you include an `also_prune` key in the
-querystring (not the body!) with a value of `yes`, `true`, or `1`, then any
-tips not in the array you `POST` will be zeroed out.
-
-NOTE: The amounts must be encoded as a string (rather than a number).
-Additionally, currently, the only supported platform is 'gratipay' ('gittip'
-still works for backwards-compatibility).
-
-This endpoint requires authentication. Look for your user ID and API key on your
-[account page](https://gratipay.com/about/me/settings/), and pass them using basic
-auth. E.g.:
-
-```
-curl https://gratipay.com/foobar/tips.json \
-    -u $userid:$api_key \
-    -X POST \
-    -d'[{"username":"bazbuz", "platform":"gratipay", "amount": "1.00"}]' \
-    -H"Content-Type: application/json"
-```
 
 API Implementations
 -------------------

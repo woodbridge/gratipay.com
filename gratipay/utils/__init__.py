@@ -132,20 +132,17 @@ def get_team(state):
     return team
 
 
-def update_global_stats(website):
-    stats = website.db.one("""
-        SELECT nactive, transfer_volume FROM paydays
+def update_cta(website):
+    nusers = website.db.one("""
+        SELECT nusers FROM paydays
         ORDER BY ts_end DESC LIMIT 1
-    """, default=(0, 0.0))
-    website.gnactive = stats[0]
-    website.gtransfer_volume = stats[1]
-
-    nbackers = website.db.one("""
-        SELECT npatrons
-          FROM participants
-         WHERE username = 'Gratipay'
     """, default=0)
-    website.support_current = cur = int(round(nbackers / stats[0] * 100)) if stats[0] else 0
+    nreceiving_from = website.db.one("""
+        SELECT nreceiving_from
+          FROM teams
+         WHERE slug = 'Gratipay'
+    """, default=0)
+    website.support_current = cur = int(round(nreceiving_from / nusers * 100)) if nusers else 0
     if cur < 10:    goal = 20
     elif cur < 15:  goal = 30
     elif cur < 25:  goal = 40
@@ -214,7 +211,7 @@ def erase_cookie(cookies, key, **kw):
     set_cookie(cookies, key, '', BEGINNING_OF_EPOCH, **kw)
 
 
-def filter_profile_subnav(user, participant, pages):
+def filter_profile_nav(user, participant, pages):
     out = []
     for foo, bar, show_them, show_others in pages:
         if (user.participant == participant and show_them) \

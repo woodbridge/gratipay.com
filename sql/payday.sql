@@ -18,7 +18,7 @@ CREATE TABLE payday_participants AS
           , braintree_customer_id
       FROM participants p
      WHERE is_suspicious IS NOT true
-       AND claimed_time < %(ts_start)s
+       AND claimed_time < (SELECT ts_start FROM current_payday())
   ORDER BY claimed_time;
 
 CREATE UNIQUE INDEX ON payday_participants (id);
@@ -42,7 +42,7 @@ CREATE TABLE payday_teams AS
        AND (SELECT count(*)
               FROM current_exchange_routes er
              WHERE er.participant = p.id
-               AND network IN ('balanced-ba', 'paypal')
+               AND network = 'paypal'
                AND error = ''
             ) > 0
     ;
@@ -51,37 +51,37 @@ DROP TABLE IF EXISTS payday_payments_done;
 CREATE TABLE payday_payments_done AS
     SELECT *
       FROM payments p
-     WHERE p.timestamp > %(ts_start)s;
+     WHERE p.timestamp > (SELECT ts_start FROM current_payday());
 
-DROP TABLE IF EXISTS payday_subscriptions;
-CREATE TABLE payday_subscriptions AS
-    SELECT subscriber, team, amount
-      FROM ( SELECT DISTINCT ON (subscriber, team) *
-               FROM subscriptions
-              WHERE mtime < %(ts_start)s
-           ORDER BY subscriber, team, mtime DESC
+DROP TABLE IF EXISTS payday_payment_instructions;
+CREATE TABLE payday_payment_instructions AS
+    SELECT s.id, participant, team, amount, due
+      FROM ( SELECT DISTINCT ON (participant, team) *
+               FROM payment_instructions
+              WHERE mtime < (SELECT ts_start FROM current_payday())
+           ORDER BY participant, team, mtime DESC
            ) s
-      JOIN payday_participants p ON p.username = s.subscriber
+      JOIN payday_participants p ON p.username = s.participant
       JOIN payday_teams t ON t.slug = s.team
      WHERE s.amount > 0
        AND ( SELECT id
                FROM payday_payments_done done
-              WHERE s.subscriber = done.participant
+              WHERE s.participant = done.participant
                 AND s.team = done.team
                 AND direction = 'to-team'
            ) IS NULL
   ORDER BY p.claimed_time ASC, s.ctime ASC;
 
-CREATE INDEX ON payday_subscriptions (subscriber);
-CREATE INDEX ON payday_subscriptions (team);
-ALTER TABLE payday_subscriptions ADD COLUMN is_funded boolean;
+CREATE INDEX ON payday_payment_instructions (participant);
+CREATE INDEX ON payday_payment_instructions (team);
+ALTER TABLE payday_payment_instructions ADD COLUMN is_funded boolean;
 
 ALTER TABLE payday_participants ADD COLUMN giving_today numeric(35,2);
-UPDATE payday_participants
+UPDATE payday_participants pp
    SET giving_today = COALESCE((
-           SELECT sum(amount)
-             FROM payday_subscriptions
-            WHERE subscriber = username
+           SELECT sum(amount + due)
+             FROM payday_payment_instructions
+            WHERE participant = pp.username
        ), 0);
 
 DROP TABLE IF EXISTS payday_takes;
@@ -108,6 +108,7 @@ RETURNS void AS $$
     DECLARE
         participant_delta numeric;
         team_delta numeric;
+        payload json;
     BEGIN
         IF ($3 = 0) THEN RETURN; END IF;
 
@@ -125,6 +126,17 @@ RETURNS void AS $$
         UPDATE payday_teams
            SET balance = (balance + team_delta)
          WHERE slug = $2;
+        UPDATE current_payment_instructions
+           SET due = 0
+         WHERE participant = $1
+           AND team = $2
+           AND due > 0;
+        IF ($4 = 'to-team') THEN
+            payload = '{"action":"pay","participant":"' || $1 || '", "team":"'
+                || $2 || '", "amount":' || $3 || '}';
+            INSERT INTO events(type, payload)
+                VALUES ('payday',payload);
+        END IF;
         INSERT INTO payday_payments
                     (participant, team, amount, direction)
              VALUES ( ( SELECT p.username
@@ -141,31 +153,54 @@ RETURNS void AS $$
     END;
 $$ LANGUAGE plpgsql;
 
+-- Add payments that were not met on to due
 
--- Create a trigger to process subscriptions
-
-CREATE OR REPLACE FUNCTION process_subscription() RETURNS trigger AS $$
-    DECLARE
-        subscriber payday_participants;
+CREATE OR REPLACE FUNCTION park(text, text, numeric)
+RETURNS void AS $$
+    DECLARE payload json;
     BEGIN
-        subscriber := (
+        IF ($3 = 0) THEN RETURN; END IF;
+
+        UPDATE current_payment_instructions
+           SET due = $3
+         WHERE participant = $1
+           AND team = $2;
+
+        payload = '{"action":"due","participant":"' || $1 || '", "team":"'
+            || $2 || '", "due":' || $3 || '}';
+        INSERT INTO events(type, payload)
+            VALUES ('payday',payload);
+
+    END;
+$$ LANGUAGE plpgsql;
+
+
+-- Create a trigger to process payment_instructions
+
+CREATE OR REPLACE FUNCTION process_payment_instruction() RETURNS trigger AS $$
+    DECLARE
+        participant payday_participants;
+    BEGIN
+        participant := (
             SELECT p.*::payday_participants
               FROM payday_participants p
-             WHERE username = NEW.subscriber
+             WHERE username = NEW.participant
         );
-        IF (NEW.amount <= subscriber.new_balance OR subscriber.card_hold_ok) THEN
-            EXECUTE pay(NEW.subscriber, NEW.team, NEW.amount, 'to-team');
+        IF (NEW.amount + NEW.due <= participant.new_balance OR participant.card_hold_ok) THEN
+            EXECUTE pay(NEW.participant, NEW.team, NEW.amount + NEW.due, 'to-team');
             RETURN NEW;
+        ELSE
+            EXECUTE park(NEW.participant, NEW.team, NEW.amount + NEW.due);
+            RETURN NULL;
         END IF;
         RETURN NULL;
     END;
 $$ LANGUAGE plpgsql;
 
-CREATE TRIGGER process_subscription BEFORE UPDATE OF is_funded ON payday_subscriptions
+CREATE TRIGGER process_payment_instruction BEFORE UPDATE OF is_funded ON payday_payment_instructions
     FOR EACH ROW
     WHEN (NEW.is_funded IS true AND OLD.is_funded IS NOT true)
-    EXECUTE PROCEDURE process_subscription();
-
+    EXECUTE PROCEDURE process_payment_instruction();
 
 -- Create a trigger to process takes
 
@@ -206,16 +241,3 @@ CREATE TRIGGER process_draw BEFORE UPDATE OF is_drained ON payday_teams
     FOR EACH ROW
     WHEN (NEW.is_drained IS true AND OLD.is_drained IS NOT true)
     EXECUTE PROCEDURE process_draw();
-
-
--- Save the stats we already have
-
-UPDATE paydays
-   SET nparticipants = (SELECT count(*) FROM payday_participants)
-     , ncc_missing = (
-           SELECT count(*)
-             FROM payday_participants
-            WHERE old_balance < giving_today
-              AND NOT has_credit_card
-       )
- WHERE ts_end='1970-01-01T00:00:00+00'::timestamptz;

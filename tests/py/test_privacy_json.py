@@ -2,7 +2,6 @@ from __future__ import print_function, unicode_literals
 
 from aspen import json
 from gratipay.testing import Harness
-from gratipay.models.participant import Participant
 
 
 class Tests(Harness):
@@ -22,7 +21,6 @@ class Tests(Harness):
         assert actual == {
             'is_searchable': True,
             'anonymous_giving': False,
-            'anonymous_receiving': False
         }
 
     def test_participant_can_toggle_is_searchable(self):
@@ -47,17 +45,6 @@ class Tests(Harness):
         actual = json.loads(response.body)['anonymous_giving']
         assert actual is False
 
-    def test_participant_can_toggle_anonymous_receiving(self):
-        response = self.hit_privacy('POST', data={'toggle': 'anonymous_receiving'})
-        actual = json.loads(response.body)
-        assert actual['anonymous_receiving'] is True
-
-    def test_participant_can_toggle_anonymous_receiving_back(self):
-        response = self.hit_privacy('POST', data={'toggle': 'anonymous_receiving'})
-        response = self.hit_privacy('POST', data={'toggle': 'anonymous_receiving'})
-        actual = json.loads(response.body)['anonymous_receiving']
-        assert actual is False
-
     # Related to is-searchable
 
     def test_meta_robots_tag_added_on_opt_out(self):
@@ -72,21 +59,56 @@ class Tests(Harness):
         self.hit_privacy('POST', data={'toggle': 'is_searchable'})
         assert 'alice' not in self.client.GET("/search.json?q=alice").body
 
-    def test_team_participant_doesnt_show_up_on_explore_teams(self):
-        alice = Participant.from_username('alice')
-        self.make_participant('A-Team', number='plural', is_searchable=False).add_member(alice)
-        assert 'A-Team' not in self.client.GET("/explore/teams/").body
+    # Related to anonymous_giving
 
-    # Related to anonymous-receiving
+    def test_anon_can_see_giving_for_non_anonymous_giving(self):
+        self.make_participant('bob', claimed_time='now',
+                              giving=10.79, ngiving_to=342, anonymous_giving=False)
+        assert '10.79' in self.client.GET('/~bob/').body
+        assert '342' in self.client.GET('/~bob/').body
 
-    def test_team_cannot_toggle_anonymous_receiving(self):
-        self.make_participant('team', claimed_time='now', number='plural')
-        response = self.client.PxST(
-            '/~team/privacy.json',
-            auth_as='team',
-            data={'toggle': 'anonymous_receiving'}
-        )
-        actual = response.code
-        expected = 403
-        assert actual == expected
+    def test_auth_can_see_giving_for_non_anonymous_giving(self):
+        self.make_participant('bob', claimed_time='now',
+                              giving=10.79, ngiving_to=342, anonymous_giving=False)
+        assert '10.79' in self.client.GET('/~bob/', auth_as='alice').body
+        assert '342' in self.client.GET('/~bob/', auth_as='alice').body
 
+    def test_admin_can_see_giving_for_non_anonymous_giving(self):
+        self.make_participant('bob', claimed_time='now',
+                              giving=10.79, ngiving_to=342, anonymous_giving=False)
+        self.make_participant('admin', is_admin=True)
+        assert '10.79' in self.client.GET('/~bob/', auth_as='admin').body
+        assert '342' in self.client.GET('/~bob/', auth_as='admin').body
+        assert '[342]' not in self.client.GET('/~bob/', auth_as='admin').body
+
+    def test_self_can_see_giving_for_non_anonymous_giving(self):
+        self.make_participant('bob', claimed_time='now',
+                              giving=10.79, ngiving_to=342, anonymous_giving=False)
+        assert '10.79' in self.client.GET('/~bob/', auth_as='bob').body.decode('utf8')
+        assert '342' in self.client.GET('/~bob/', auth_as='bob').body.decode('utf8')
+        assert '[342]' not in self.client.GET('/~bob/', auth_as='bob').body.decode('utf8')
+
+    def test_anon_cannot_see_giving_for_anonymous_giving(self):
+        self.make_participant('bob', claimed_time='now',
+                              giving=10.79, ngiving_to=342, anonymous_giving=True)
+        assert '10.79' not in self.client.GET('/~bob/').body
+        assert '342' not in self.client.GET('/~bob/').body
+
+    def test_auth_cannot_see_giving_for_anonymous_giving(self):
+        self.make_participant('bob', claimed_time='now',
+                              giving=10.79, ngiving_to=342, anonymous_giving=True)
+        assert '10.79' not in self.client.GET('/~bob/', auth_as='alice').body
+        assert '342' not in self.client.GET('/~bob/', auth_as='alice').body
+
+    def test_admin_can_see_giving_for_anonymous_giving(self):
+        self.make_participant('bob', claimed_time='now',
+                              giving=10.79, ngiving_to=342, anonymous_giving=True)
+        self.make_participant('admin', is_admin=True)
+        assert '10.79' in self.client.GET('/~bob/', auth_as='admin').body
+        assert '[342]' in self.client.GET('/~bob/', auth_as='admin').body
+
+    def test_self_can_see_giving_for_anonymous_giving(self):
+        self.make_participant('bob', claimed_time='now',
+                              giving=10.79, ngiving_to=342, anonymous_giving=True)
+        assert '10.79' in self.client.GET('/~bob/', auth_as='bob').body.decode('utf8')
+        assert '[342]' in self.client.GET('/~bob/', auth_as='bob').body.decode('utf8')

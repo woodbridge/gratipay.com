@@ -1,0 +1,38 @@
+{% macro giving_table(state, giving, total) %}
+    <table class="table">
+        <thead>
+            <tr>
+                <th>{{ _("Team") }}</th>
+                {% if state != 'cancelled' %}
+                    <th class="figure">{{ _("Amount ($)") }}</th>
+                {% endif %}
+                <th class="figure">{{ _("Last Set") }}</th>
+                <th class="figure">{{ _("First Set") }}</th>
+            </tr>
+        </thead>
+        <tfoot>
+            <tr>
+                <td></td>
+                {% if state != 'cancelled' %}
+                    <td class="figure total">{{ total }}</td>
+                {% endif %}
+                <td></td>
+                <td></td>
+            </tr>
+        </tfoot>
+        <tbody>
+        {% for payment_instruction in giving %}
+        <tr>
+            <td class="team">
+                <a href="/{{ payment_instruction.team_slug }}/">{{ payment_instruction.team_name }}</a>
+            </td>
+            {% if state != 'cancelled' %}
+                <td class="figure">{{ payment_instruction.amount }}</td>
+            {% endif %}
+            <td class="figure">{{ to_age(payment_instruction.mtime) }}</td>
+            <td class="figure">{{ to_age(payment_instruction.ctime) }}</td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+{% endmacro %}

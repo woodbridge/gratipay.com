@@ -7,10 +7,10 @@ import gratipay.wireup
 from gratipay import utils
 from gratipay.cron import Cron
 from gratipay.models.participant import Participant
-from gratipay.security import authentication, csrf, x_frame_options
+from gratipay.security import authentication, csrf, security_headers
 from gratipay.utils import erase_cookie, http_caching, i18n, set_cookie, timer
 from gratipay.version import get_version
-from gratipay.renderers import csv_dump, jinja2_htmlescaped
+from gratipay.renderers import csv_dump, jinja2_htmlescaped, eval_
 
 import aspen
 from aspen.website import Website
@@ -25,16 +25,18 @@ website = Website()
 website.renderer_default = 'unspecified'  # require explicit renderer, to avoid escaping bugs
 
 website.renderer_factories['csv_dump'] = csv_dump.Factory(website)
+website.renderer_factories['eval'] = eval_.Factory(website)
 website.renderer_factories['jinja2_htmlescaped'] = jinja2_htmlescaped.Factory(website)
 website.default_renderers_by_media_type['text/html'] = 'jinja2_htmlescaped'
 website.default_renderers_by_media_type['text/plain'] = 'jinja2'  # unescaped is fine here
+website.default_renderers_by_media_type['image/*'] = 'eval'
 
 website.renderer_factories['jinja2'].Renderer.global_context = {
     # This is shared via class inheritance with jinja2_htmlescaped.
     'b64encode': base64.b64encode,
     'enumerate': enumerate,
     'filter': filter,
-    'filter_profile_subnav': utils.filter_profile_subnav,
+    'filter_profile_nav': utils.filter_profile_nav,
     'float': float,
     'len': len,
     'map': map,
@@ -64,6 +66,7 @@ website.mailer = gratipay.wireup.mail(env, website.project_root)
 gratipay.wireup.base_url(website, env)
 gratipay.wireup.secure_cookies(env)
 gratipay.wireup.billing(env)
+gratipay.wireup.team_review(env)
 gratipay.wireup.username_restrictions(website)
 gratipay.wireup.load_i18n(website.project_root, tell_sentry)
 gratipay.wireup.other_stuff(website, env)
@@ -78,7 +81,7 @@ if exc:
 # =============
 
 cron = Cron(website)
-cron(env.update_global_stats_every, lambda: utils.update_global_stats(website))
+cron(env.update_cta_every, lambda: utils.update_cta(website))
 cron(env.check_db_every, website.db.self_check, True)
 cron(env.dequeue_emails_every, Participant.dequeue_emails, True)
 
@@ -119,7 +122,7 @@ algorithm.functions = [
     authentication.add_auth_to_response,
     csrf.add_token_to_response,
     http_caching.add_caching_to_response,
-    x_frame_options,
+    security_headers,
 
     algorithm['log_traceback_for_5xx'],
     algorithm['delegate_error_to_simplate'],

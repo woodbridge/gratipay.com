@@ -1,108 +1,136 @@
 #homepage {
-    h1 {
-        font: bold 30px/40px $Ideal;
-        text-transform: none;
-        margin: 0;
-        padding: 0;
-    }
+    .welcome {
+        position: fixed;
+        left: 50%;
+        top: 30%;
+        margin-top: 24px;
+        margin-left: -144px;
+        width: 288px;
+        font: normal 14px/18px $Ideal;
+        padding: 24px;
+        background: $white;
+        border: 2px solid $black;
+        @include border-radius(5px);
+        box-shadow: 0px 0px 32px 16px rgba($black, 0.5);
+        z-index: 3;
 
-    p {
-        font: normal 18px/24px $Ideal;
-        margin: 0;
-        padding: 0 0 24px 0;
-        &:last-child {
-            padding-bottom: 0;
+        .continue {
+            text-align: right;
         }
     }
 
-    #sidebar {
-        width: 480px;
-        padding: 256px 48px 128px 110px;
-        img {
-            width: 384px;
-            position: absolute;
-            top: 48px;
-            left: 48px;
+    #main {
+        position: relative;
+        .nav {
+            margin-bottom: 10px;
         }
-        a {
-            color: transparentize($gold, 0.2);
-            &:hover {
-                color: $gold;
+    }
+
+    .apply {
+        position: absolute;
+        top: 0;
+        right: 0;
+    }
+
+    table.teams {
+        width: 100%;
+
+        tr:first-child td { border-top: 0; }
+        tr:last-child td { border-bottom: 0; }
+
+        td.team {
+            position: relative;
+            color: $medium-gray;
+            border: 1px solid $light-brown;
+            border-style: solid none;
+
+            a {
+                color: $medium-gray;
+                position: relative;
+                z-index: 2;
             }
-        }
-        span {
-            white-space: nowrap;
-        }
-        p {
-            color: transparentize($white, 0.3);
-        }
-    }
-
-    #content {
-        background: transparentize($white, 0.1);
-        padding: 256px 48px 128px;
-        color: transparentize($brown, 0.2);
-        h1 { color: $brown; }
-        a {
-            color: transparentize($green, 0.3);
-            &:hover {
-                color: $green;
+            a:hover {
+                background: none !important;
+                color: $green !important;
             }
-        }
+            img {
+                width: 48px;
+                height: 48px;
+                position: absolute;
+                top: 8px;
+                left: 0;
+            }
+            .name {
+                display: block;
+                color: $black;
+                font: bold 20px/24px $Ideal;
+                position: absolute;
+                z-index: 1;
+                top: 0;
+                left: 56px;
+                padding: 12px 0 0;
+                width: 100%;
+                height: 100%;
+            }
+            .details {
+                font: normal 12px/15px $Ideal;
+                min-height: 64px;
+                padding: 38px 144px 0 56px;
+                .owner a {
+                    color: $medium-gray;
+                    position: relative;
+                    z-index: 2;
+                }
+                span {
+                    white-space: nowrap;
+                }
+                .status-icon {
+                    font-size: 12px;
+                    padding: 0;
+                }
+            }
+            .numbers {
+                position: absolute;
+                bottom: 8px;
+                right: 0;
+                z-index: 0;
+                font-size: 11px;
+                line-height: 13px;
+                th {
+                    text-align: right;
+                    border-bottom: 1px solid transparent;
+                }
+                .label {
+                    text-align: left;
+                }
+                td {
+                    text-align: right;
+                    padding: 1px 0 0 12px;
+                    &:first-child {
+                        padding-left: 0;
+                    }
+                }
+                th, .label {
+                    color: $medium-gray;
+                    visibility: hidden;
+                }
+            }
 
-        form {
-            display: inline;
-        }
-
-        div.twitter {
-            margin-bottom: 48px;
-            button {
-                @include has-icon("twitter", 24px, 4px);
-                font-size: 24px;
-                padding: 10px 24px 10px 18px;
-                border-radius: 6px;
-                background: $green;
-                color: $white;
-                &:hover {
-                    color: $gold;
-                    border-color: $brown;
-                    background: $brown;
+            &:hover {
+                color: $black;
+                .status a {
+                    color: $black;
+                }
+                .owner a {
+                    color: $black;
+                }
+                th, .label {
+                    visibility: visible;
+                }
+                th {
+                    border-bottom: 1px solid $light-brown;
                 }
             }
         }
-        .other {
-            padding-bottom: 24px;
-            font-size: 13px;
-            line-height: 18px;
-            max-width: 700px;
-            display: block;
-
-            .or {
-                font: normal 13px/16px $Ideal;
-            }
-
-            button {
-                border: 1px solid transparentize($brown, 0.2);
-                background: transparent;
-                color: transparentize($brown, 0.2);
-                &:hover {
-                    color: $gold;
-                    border-color: $brown;
-                    background: $brown;
-                }
-            }
-            form.facebook button { @include has-icon("facebook", 13px); }
-            form.google button { @include has-icon("google", 13px); }
-            form.github button { @include has-icon("github", 13px); }
-            form.bitbucket button { @include has-icon("bitbucket", 13px); }
-            form.openstreetmap button { @include has-icon("openstreetmap", 13px); }
-        }
-    }
-
-    .sign-out {
-        float: right;
-        font-size: 14px;
-        line-height: 40px;
-        margin-top: -40px;
     }
 }

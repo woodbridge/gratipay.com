@@ -181,7 +181,7 @@ CREATE TABLE exchange_routes
 , error         text           NOT NULL
 , fee_cap       numeric(35,2)
 , UNIQUE (participant, network, address)
-);
+ );
 
 CREATE VIEW current_exchange_routes AS
     SELECT DISTINCT ON (participant, network) *
@@ -229,7 +229,7 @@ CREATE TABLE community_members
 , mtime         timestamptz    NOT NULL DEFAULT CURRENT_TIMESTAMP
 , name          text           NOT NULL
 , is_member     boolean        NOT NULL
-);
+ );
 
 CREATE INDEX community_members_idx
     ON community_members (slug, participant, mtime DESC);
@@ -240,7 +240,7 @@ CREATE TABLE communities
 , nmembers int NOT NULL
 , ctime timestamptz NOT NULL
 , CHECK (nmembers > 0)
-);
+ );
 
 \i sql/upsert_community.sql
 
@@ -337,7 +337,7 @@ CREATE TABLE statements
 , lang         text    NOT NULL
 , content      text    NOT NULL CHECK (content <> '')
 , UNIQUE (participant, lang)
-);
+ );
 
 \i sql/enumerate.sql
 
@@ -371,7 +371,7 @@ CREATE TABLE email_queue
 , participant   bigint   NOT NULL REFERENCES participants(id)
 , spt_name      text     NOT NULL
 , context       bytea    NOT NULL
-);
+ );
 
 -- https://github.com/gratipay/gratipay.com/pull/3239
 CREATE TABLE balances_at
@@ -379,7 +379,7 @@ CREATE TABLE balances_at
 , at           timestamptz    NOT NULL
 , balance      numeric(35,2)  NOT NULL
 , UNIQUE (participant, at)
-);
+ );
 
 -- https://github.com/gratipay/gratipay.com/pull/3301
 ALTER TABLE participants ADD COLUMN notify_charge int DEFAULT 3;
@@ -423,12 +423,12 @@ CREATE TABLE teams
 
 
 -- https://github.com/gratipay/gratipay.com/pull/3414
--- subscriptions - recurring payments from a participant to a team
-CREATE TABLE subscriptions
+-- payment_instructions - A ~user instructs Gratipay to make voluntary payments to a Team.
+CREATE TABLE payment_instructions
 ( id                    serial                      PRIMARY KEY
 , ctime                 timestamp with time zone    NOT NULL
 , mtime                 timestamp with time zone    NOT NULL DEFAULT CURRENT_TIMESTAMP
-, subscriber            text                        NOT NULL REFERENCES participants
+, participant           text                        NOT NULL REFERENCES participants
                                                         ON UPDATE CASCADE ON DELETE RESTRICT
 , team                  text                        NOT NULL REFERENCES teams
                                                         ON UPDATE CASCADE ON DELETE RESTRICT
@@ -436,25 +436,26 @@ CREATE TABLE subscriptions
 , is_funded             boolean                     NOT NULL DEFAULT false
  );
 
-CREATE INDEX subscriptions_all ON subscriptions USING btree (subscriber, team, mtime DESC);
+CREATE INDEX payment_instructions_all ON payment_instructions
+       USING btree (participant, team, mtime DESC);
 
-CREATE VIEW current_subscriptions AS
-    SELECT DISTINCT ON (subscriber, team) *
-      FROM subscriptions
-  ORDER BY subscriber, team, mtime DESC;
+CREATE VIEW current_payment_instructions AS
+    SELECT DISTINCT ON (participant, team) *
+      FROM payment_instructions
+  ORDER BY participant, team, mtime DESC;
 
--- Allow updating is_funded via the current_subscriptions view for convenience
-CREATE FUNCTION update_subscription() RETURNS trigger AS $$
+-- Allow updating is_funded via the current_payment_instructions view for convenience
+CREATE FUNCTION update_payment_instruction() RETURNS trigger AS $$
     BEGIN
-        UPDATE subscriptions
+        UPDATE payment_instructions
            SET is_funded = NEW.is_funded
          WHERE id = NEW.id;
         RETURN NULL;
     END;
 $$ LANGUAGE plpgsql;
 
-CREATE TRIGGER update_current_subscription INSTEAD OF UPDATE ON current_subscriptions
-    FOR EACH ROW EXECUTE PROCEDURE update_subscription();
+CREATE TRIGGER update_current_payment_instruction INSTEAD OF UPDATE ON current_payment_instructions
+    FOR EACH ROW EXECUTE PROCEDURE update_payment_instruction();
 
 
 -- payroll - recurring payments from a team to participant
@@ -535,3 +536,169 @@ CREATE TRIGGER update_status_of_1_0_balance
     FOR EACH ROW
     WHEN (OLD.balance > 0 AND NEW.balance = 0)
     EXECUTE PROCEDURE set_status_of_1_0_balance_to_resolved();
+
+
+-- https://github.com/gratipay/gratipay.com/pull/3694
+BEGIN;
+
+    ALTER TABLE teams ALTER COLUMN revenue_model DROP NOT NULL;
+    ALTER TABLE teams ALTER COLUMN getting_involved DROP NOT NULL;
+    ALTER TABLE teams ALTER COLUMN getting_paid DROP NOT NULL;
+
+    ALTER TABLE teams ADD COLUMN onboarding_url text NOT NULL DEFAULT '';
+    ALTER TABLE teams ADD COLUMN todo_url text NOT NULL DEFAULT '';
+
+END;
+
+
+-- https://github.com/gratipay/gratipay.com/pull/3721
+BEGIN;
+
+    ALTER TABLE participants DROP COLUMN anonymous_receiving;
+    ALTER TABLE participants DROP COLUMN npatrons;
+    ALTER TABLE participants DROP COLUMN receiving;
+
+    ALTER TABLE participants ADD COLUMN ngiving_to INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE participants ADD COLUMN ntaking_from INTEGER NOT NULL DEFAULT 0;
+
+    ALTER TABLE teams RENAME COLUMN nsupporters TO nreceiving_from;
+    ALTER TABLE teams RENAME COLUMN nmembers TO ndistributing_to;
+    ALTER TABLE teams RENAME COLUMN payroll TO distributing;
+
+END;
+
+
+-- https://github.com/gratipay/gratipay.com/pull/3730
+BEGIN;
+
+    ALTER TABLE paydays DROP COLUMN nparticipants;
+    ALTER TABLE paydays DROP COLUMN ntippers;
+    ALTER TABLE paydays DROP COLUMN ntips;
+    ALTER TABLE paydays DROP COLUMN ntransfers;
+    ALTER TABLE paydays DROP COLUMN ncc_failing;
+    ALTER TABLE paydays DROP COLUMN ncc_missing;
+    ALTER TABLE paydays DROP COLUMN ncharges;
+    ALTER TABLE paydays DROP COLUMN charge_volume;
+    ALTER TABLE paydays DROP COLUMN charge_fees_volume;
+    ALTER TABLE paydays DROP COLUMN nachs;
+    ALTER TABLE paydays DROP COLUMN ach_volume;
+    ALTER TABLE paydays DROP COLUMN ach_fees_volume;
+    ALTER TABLE paydays DROP COLUMN nach_failing;
+    ALTER TABLE paydays DROP COLUMN npachinko;
+    ALTER TABLE paydays DROP COLUMN pachinko_volume;
+
+    ALTER TABLE paydays RENAME COLUMN transfer_volume TO volume;
+    ALTER TABLE transfers ADD COLUMN payday integer DEFAULT NULL
+        REFERENCES paydays ON UPDATE RESTRICT ON DELETE RESTRICT;
+
+END;
+
+
+-- https://github.com/gratipay/gratipay.com/pull/3733
+BEGIN;
+
+    ALTER TABLE paydays RENAME COLUMN nactive TO nusers;
+    ALTER TABLE paydays ADD COLUMN nteams integer NOT NULL DEFAULT 0;
+
+END;
+
+
+-- https://github.com/gratipay/gratipay.com/pull/3675
+BEGIN;
+
+    ALTER TABLE payment_instructions ADD COLUMN due numeric(35,2) DEFAULT 0;
+
+    -- Recreate the current_payment_instructions view to pick up due.
+    DROP VIEW current_payment_instructions;
+    CREATE VIEW current_payment_instructions AS
+        SELECT DISTINCT ON (participant, team) *
+          FROM payment_instructions
+      ORDER BY participant, team, mtime DESC;
+
+    -- Allow updating is_funded and due via the current_payment_instructions view for convenience.
+    DROP FUNCTION update_payment_instruction();
+    CREATE FUNCTION update_payment_instruction() RETURNS trigger AS $$
+        BEGIN
+            UPDATE payment_instructions
+               SET is_funded = NEW.is_funded
+                 , due = NEW.due
+             WHERE id = NEW.id;
+            RETURN NULL;
+        END;
+    $$ LANGUAGE plpgsql;
+
+    CREATE TRIGGER update_current_payment_instruction
+        INSTEAD OF UPDATE ON current_payment_instructions
+        FOR EACH ROW EXECUTE PROCEDURE update_payment_instruction();
+END;
+
+
+-- https://github.com/gratipay/gratipay.com/pull/3744
+BEGIN;
+    CREATE TYPE status_of_1_0_payout AS ENUM
+        ( 'too-little'
+        , 'pending-application'
+        , 'pending-review'
+        , 'rejected'
+        , 'pending-payout'
+        , 'completed'
+         );
+    ALTER TABLE participants ADD COLUMN status_of_1_0_payout status_of_1_0_payout
+        NOT NULL DEFAULT 'completed';
+
+    CREATE FUNCTION complete_1_0_payout() RETURNS trigger AS $$
+        BEGIN
+            UPDATE participants
+               SET status_of_1_0_payout='completed'
+             WHERE id = NEW.id;
+            RETURN NULL;
+        END;
+    $$ LANGUAGE plpgsql;
+
+    CREATE TRIGGER update_status_of_1_0_payout
+        AFTER UPDATE OF balance ON participants
+        FOR EACH ROW
+        WHEN (OLD.balance > 0 AND NEW.balance = 0)
+        EXECUTE PROCEDURE complete_1_0_payout();
+END;
+
+
+-- https://github.com/gratipay/gratipay.com/pull/3760
+BEGIN;
+    ALTER TABLE participants DROP COLUMN status_of_1_0_balance;
+    DROP TRIGGER update_status_of_1_0_balance ON participants;
+    DROP FUNCTION set_status_of_1_0_balance_to_resolved();
+END;
+
+
+-- https://github.com/gratipay/gratipay.com/pull/3568
+BEGIN;
+    ALTER TABLE teams ADD COLUMN review_url text DEFAULT NULL;
+END;
+
+
+-- https://github.com/gratipay/gratipay.com/pull/3750
+BEGIN;
+    CREATE TYPE supported_image_types AS ENUM ('image/png', 'image/jpeg');
+    ALTER TABLE teams ADD COLUMN image_oid_original oid NOT NULL DEFAULT 0;
+    ALTER TABLE teams ADD COLUMN image_oid_large oid NOT NULL DEFAULT 0;
+    ALTER TABLE teams ADD COLUMN image_oid_small oid NOT NULL DEFAULT 0;
+    ALTER TABLE teams ADD COLUMN image_type supported_image_types;
+END;
+
+
+-- https://github.com/gratipay/gratipay.com/pull/3785
+BEGIN;
+
+    CREATE FUNCTION current_payday() RETURNS paydays AS $$
+        SELECT *
+          FROM paydays
+         WHERE ts_end='1970-01-01T00:00:00+00'::timestamptz;
+    $$ LANGUAGE sql;
+
+    CREATE FUNCTION current_payday_id() RETURNS int AS $$
+        -- This is a function so we can use it in DEFAULTS for a column.
+        SELECT id FROM current_payday();
+    $$ LANGUAGE sql;
+
+END;

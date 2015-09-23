@@ -14,17 +14,17 @@ class TestFakeData(Harness):
         num_tips = 5
         num_teams = 1
         num_transfers = 5
-        fake_data.populate_db(self.db, num_participants, num_tips, num_teams, num_transfers)
+        fake_data.main(self.db, num_participants, num_tips, num_teams, num_transfers)
         tips = self.db.all("SELECT * FROM tips")
         participants = self.db.all("SELECT * FROM participants")
         transfers = self.db.all("SELECT * FROM transfers")
         teams = self.db.all("SELECT * FROM teams")
-        subscriptions = self.db.all("SELECT * FROM subscriptions")
+        payment_instructions = self.db.all("SELECT * FROM payment_instructions")
         assert len(tips) == num_tips
         assert len(participants) == num_participants
         assert len(transfers) == num_transfers
         assert len(teams) == num_teams
         if num_tips <= num_participants - num_teams:
-            assert len(subscriptions) == num_tips
+            assert len(payment_instructions) == num_tips
         else:
-            assert len(subscriptions) == (num_participants - num_teams) 
+            assert len(payment_instructions) == (num_participants - num_teams)

@@ -1,4 +1,7 @@
 raw = """\
+Sergey Bobrov https://twitter.com/Black2Fan
+https://github.com/gratipay/security-flh0cu/issues/1
+
 BALAJI P R https://www.linkedin.com/in/balagpy
 https://github.com/gratipay/security-2a443f/issues/1
 
@@ -58,15 +61,20 @@ for line in raw.splitlines():
         hof[-1][0] = parse_github(line)
 
 [---]
-title = _("Security")
-subhead = _("Hall of Fame")
+banner = _("About")
+title = _("Hall of Fame (Legacy)")
 [---] text/html
 {% extends "templates/about-security.html" %}
 {% block content %}
-<div class="col0">
-    <p>Thank you to the following researchers (most recent first) for
-    <a href="./">disclosing</a> security issues to us.</p>
-</div>
+
+<p><b>Note:</b> We now prefer to <a
+    href="https://hackerone.com/gratipay/thanks">thank researchers on
+HackerOne</a>. This is our legacy Hall of Fame.</p>
+
+<p>Thank you to the following researchers (most recent first) for <a
+    href="https://hackerone.com/gratipay">disclosing</a> security issues to
+us outside of HackerOne.</p>
+
 <div class="hall-of-fame">
     <dl>
         {% for researchers, link in hof %}

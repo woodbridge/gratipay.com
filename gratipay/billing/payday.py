@@ -19,8 +19,7 @@ import braintree
 import aspen.utils
 from aspen import log
 from gratipay.billing.exchanges import (
-    ach_credit, cancel_card_hold, capture_card_hold, create_card_hold, upcharge,
-    get_ready_payout_routes_by_network
+    cancel_card_hold, capture_card_hold, create_card_hold, upcharge, MINIMUM_CHARGE,
 )
 from gratipay.exceptions import NegativeBalance
 from gratipay.models import check_db
@@ -29,9 +28,6 @@ from psycopg2 import IntegrityError
 
 with open('sql/payday.sql') as f:
     PAYDAY = f.read()
-
-with open('sql/fake_payday.sql') as f:
-    FAKE_PAYDAY = f.read()
 
 
 class ExceptionWrapped(Exception): pass
@@ -74,15 +70,13 @@ class Payday(object):
             payin
                 prepare
                 create_card_holds
-                process_subscriptions
+                process_payment_instructions
                 transfer_takes
                 process_draws
                 settle_card_holds
                 update_balances
                 take_over_balances
-            payout
             update_stats
-            update_cached_amounts
             end
 
     """
@@ -138,11 +132,7 @@ class Payday(object):
             self.payin()
             self.mark_stage_done()
         if self.stage < 2:
-            self.payout()
-            self.mark_stage_done()
-        if self.stage < 3:
             self.update_stats()
-            self.update_cached_amounts()
             self.mark_stage_done()
 
         self.end()
@@ -159,9 +149,9 @@ class Payday(object):
         money internally between participants.
         """
         with self.db.get_cursor() as cursor:
-            self.prepare(cursor, self.ts_start)
+            self.prepare(cursor)
             holds = self.create_card_holds(cursor)
-            self.process_subscriptions(cursor)
+            self.process_payment_instructions(cursor)
             self.transfer_takes(cursor, self.ts_start)
             self.process_draws(cursor)
             payments = cursor.all("""
@@ -182,10 +172,10 @@ class Payday(object):
 
 
     @staticmethod
-    def prepare(cursor, ts_start):
+    def prepare(cursor):
         """Prepare the DB: we need temporary tables with indexes and triggers.
         """
-        cursor.run(PAYDAY, dict(ts_start=ts_start))
+        cursor.run(PAYDAY)
         log('Prepared the DB.')
 
 
@@ -230,26 +220,24 @@ class Payday(object):
             if p.old_balance < 0:
                 amount -= p.old_balance
             if p.id in holds:
-                charge_amount = upcharge(amount)[0]
-                if holds[p.id].amount >= charge_amount:
-                    return
+                if amount >= MINIMUM_CHARGE:
+                    charge_amount = upcharge(amount)[0]
+                    if holds[p.id].amount >= charge_amount:
+                        return
+                    else:
+                        # The amount is too low, cancel the hold and make a new one
+                        cancel_card_hold(holds.pop(p.id))
                 else:
-                    # The amount is too low, cancel the hold and make a new one
+                    # not up to minimum charge level. cancel the hold
                     cancel_card_hold(holds.pop(p.id))
-            hold, error = create_card_hold(self.db, p, amount)
-            if error:
-                return 1
-            else:
-                holds[p.id] = hold
-        n_failures = sum(filter(None, threaded_map(f, participants)))
-
-        # Record the number of failures
-        cursor.one("""
-            UPDATE paydays
-               SET ncc_failing = %s
-             WHERE ts_end='1970-01-01T00:00:00+00'::timestamptz
-         RETURNING id
-        """, (n_failures,), default=NoPayday)
+                    return
+            if amount >= MINIMUM_CHARGE:
+                hold, error = create_card_hold(self.db, p, amount)
+                if error:
+                    return 1
+                else:
+                    holds[p.id] = hold
+        threaded_map(f, participants)
 
         # Update the values of card_hold_ok in our temporary table
         if not holds:
@@ -264,11 +252,12 @@ class Payday(object):
 
 
     @staticmethod
-    def process_subscriptions(cursor):
-        """Trigger the process_subscription function for each row in payday_subscriptions.
+    def process_payment_instructions(cursor):
+        """Trigger the process_payment_instructions function for each row in
+        payday_payment_instructions.
         """
-        log("Processing subscriptions.")
-        cursor.run("UPDATE payday_subscriptions SET is_funded=true;")
+        log("Processing payment instructions.")
+        cursor.run("UPDATE payday_payment_instructions SET is_funded=true;")
 
 
     @staticmethod
@@ -358,6 +347,7 @@ class Payday(object):
                 SELECT *, (SELECT id FROM paydays WHERE extract(year from ts_end) = 1970)
                   FROM payday_payments;
         """)
+
         log("Updated the balances of %i participants." % len(participants))
 
 
@@ -402,94 +392,27 @@ class Payday(object):
             """)
 
 
-    def payout(self):
-        """This is the second stage of payday in which we send money out to the
-        bank accounts of participants.
-        """
-        log("Starting payout loop.")
-        routes = get_ready_payout_routes_by_network(self.db, 'balanced-ba')
-        def credit(route):
-            if route.participant.is_suspicious is None:
-                log("UNREVIEWED: %s" % route.participant.username)
-                return
-            withhold = route.participant.giving
-            error = ach_credit(self.db, route.participant, withhold)
-            if error:
-                self.mark_ach_failed()
-        threaded_map(credit, routes)
-        log("Did payout for %d participants." % len(routes))
-        self.db.self_check()
-        log("Checked the DB.")
-
-
     def update_stats(self):
         log("Updating stats.")
         self.db.run("""\
 
-            WITH our_transfers AS (
-                     SELECT *
-                       FROM transfers
-                      WHERE "timestamp" >= %(ts_start)s
-                 )
-               , our_tips AS (
-                     SELECT *
-                       FROM our_transfers
-                      WHERE context = 'tip'
-                 )
-               , our_pachinkos AS (
-                     SELECT *
-                       FROM our_transfers
-                      WHERE context = 'take'
-                 )
-               , our_exchanges AS (
-                     SELECT *
-                       FROM exchanges
-                      WHERE "timestamp" >= %(ts_start)s
-                 )
-               , our_achs AS (
-                     SELECT *
-                       FROM our_exchanges
-                      WHERE amount < 0
-                 )
-               , our_charges AS (
-                     SELECT *
-                       FROM our_exchanges
-                      WHERE amount > 0
-                        AND status <> 'failed'
-                 )
-            UPDATE paydays
-               SET nactive = (
-                       SELECT DISTINCT count(*) FROM (
-                           SELECT tipper FROM our_transfers
-                               UNION
-                           SELECT tippee FROM our_transfers
-                       ) AS foo
+            WITH our_payments AS (SELECT * FROM payments WHERE payday=%(payday)s)
+            UPDATE paydays p
+               SET nusers = (SELECT count(*) FROM (
+                    SELECT DISTINCT ON (participant) participant FROM our_payments GROUP BY participant
+                   ) AS foo)
+                 , nteams = (SELECT count(*) FROM (
+                    SELECT DISTINCT ON (team) team FROM our_payments GROUP BY team
+                   ) AS foo)
+                 , volume = (
+                    SELECT COALESCE(sum(amount), 0)
+                      FROM our_payments
+                     WHERE payday=p.id AND direction='to-team'
                    )
-                 , ntippers = (SELECT count(DISTINCT tipper) FROM our_transfers)
-                 , ntips = (SELECT count(*) FROM our_tips)
-                 , npachinko = (SELECT count(*) FROM our_pachinkos)
-                 , pachinko_volume = (SELECT COALESCE(sum(amount), 0) FROM our_pachinkos)
-                 , ntransfers = (SELECT count(*) FROM our_transfers)
-                 , transfer_volume = (SELECT COALESCE(sum(amount), 0) FROM our_transfers)
-                 , nachs = (SELECT count(*) FROM our_achs)
-                 , ach_volume = (SELECT COALESCE(sum(amount), 0) FROM our_achs)
-                 , ach_fees_volume = (SELECT COALESCE(sum(fee), 0) FROM our_achs)
-                 , ncharges = (SELECT count(*) FROM our_charges)
-                 , charge_volume = (
-                       SELECT COALESCE(sum(amount + fee), 0)
-                         FROM our_charges
-                   )
-                 , charge_fees_volume = (SELECT COALESCE(sum(fee), 0) FROM our_charges)
-             WHERE ts_end='1970-01-01T00:00:00+00'::timestamptz
+             WHERE id=%(payday)s
 
-        """, {'ts_start': self.ts_start})
+        """, {'payday': self.id})
         log("Updated payday stats.")
-
-
-    def update_cached_amounts(self):
-        with self.db.get_cursor() as cursor:
-            cursor.execute(FAKE_PAYDAY)
-        log("Updated receiving amounts.")
 
 
     def end(self):
@@ -528,9 +451,9 @@ class Payday(object):
                 WITH tippees AS (
                          SELECT t.slug, amount
                            FROM ( SELECT DISTINCT ON (team) team, amount
-                                    FROM subscriptions
+                                    FROM payment_instructions
                                    WHERE mtime < %(ts_start)s
-                                     AND subscriber = %(username)s
+                                     AND participant = %(username)s
                                 ORDER BY team, mtime DESC
                                 ) s
                            JOIN teams t ON s.team = t.slug
@@ -541,7 +464,7 @@ class Payday(object):
                             AND (SELECT count(*)
                                    FROM current_exchange_routes er
                                   WHERE er.participant = p.id
-                                    AND network IN ('balanced-ba', 'paypal')
+                                    AND network = 'paypal'
                                     AND error = ''
                                 ) > 0
                      )
@@ -558,20 +481,6 @@ class Payday(object):
                 nteams=nteams,
                 top_team=top_team,
             )
-
-
-    # Record-keeping.
-    # ===============
-
-    def mark_ach_failed(self):
-        self.db.one("""\
-
-            UPDATE paydays
-               SET nach_failing = nach_failing + 1
-             WHERE ts_end='1970-01-01T00:00:00+00'::timestamptz
-         RETURNING id
-
-        """, default=NoPayday)
 
 
     def mark_stage_done(self):

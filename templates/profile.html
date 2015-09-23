@@ -1,4 +1,4 @@
-{% extends "templates/participant.html" %}
+{% extends "templates/base.html" %}
 
 {% block head_early %}
     {% if not participant.is_searchable %}
@@ -8,9 +8,114 @@
 
 {% block scripts %}
     {% if user.ADMIN %}<script src="{{ website.asset('admin.js') }}"></script>{% endif %}
-    <script>$(document).ready(Gratipay.tips.init)</script>
 {% endblock %}
 
-{% block subnav %}
-{% include "templates/profile-subnav.html" %}
+{% block banner %}
+{% from 'templates/avatar-url.html' import avatar_img with context %}
+
+<div class="avatar {{ 'is-suspicious' if participant.is_suspicious }}">
+    {{ avatar_img(participant) }}
+
+    {% if user.ADMIN %}
+    <label class="is-suspicious-label">
+        Suspicious
+        <input type="checkbox" data-username="{{ participant.username }}"
+            {% if participant.is_suspicious %}checked="true"{% endif %} />
+    </label>
+
+    {% set payout_status = participant.status_of_1_0_payout %}
+    <select class="payout-1-0" data-username="{{ participant.username }}">
+        {% for option in ( 'too-little'
+                         , 'pending-application'
+                         , 'pending-review'
+                         , 'rejected'
+                         , 'pending-payout'
+                         , 'completed'
+                          ) %}
+        <option {{ 'selected' if payout_status == option else '' }}
+            value="{{ option }}">{{ option }}</option>
+        {% endfor %}
+    </select>
+
+    {% elif participant.is_suspicious %}
+    <div class="is-suspicious-label">Suspicious</div>
+    {% endif %}
+</div>
+
+<div class="details mono">
+    <table>
+        <tr>
+            <th class="label">{{ _("Weekly") }}</th>
+            <th>&#x03A3; &nbsp;</th>
+            <th>n</th>
+        </tr>
+        <tr>
+            <td class="label">{{ _("Giving") }}</td>
+            {% if participant.anonymous_giving %}
+                {% if user.ADMIN or (user.participant == participant)%}
+                <td>{{ format_currency(participant.giving, 'USD') }}</td>
+                <td>[{{ participant.ngiving_to }}]</td>
+                {% else %}
+                <td colspan="2">
+                    [{{ _("hidden") }}]
+                </td>
+                {% endif %}
+            {% else %}
+            <td>{{ format_currency(participant.giving, 'USD') }}</td>
+            <td>{{ participant.ngiving_to }}</td>
+            {% endif %}
+        </tr>
+        <tr>
+            <td class="label">{{ _("Taking") }}</td>
+            <td>{{ format_currency(participant.taking, 'USD') }}</td>
+            <td>{{ participant.ntaking_from }}</td>
+        </tr>
+    </table>
+
+    {% if participant.claimed_time %}
+    <p class="luxury">{{ _('Joined') }} {{ to_age(participant.claimed_time, add_direction=True) }}</p>
+    {% endif %}
+
+</div>
+
+{% if user.ADMIN %}
+    {% if participant.is_closed %}
+    <div class="admin-details mono">
+        Closed {{ to_age(participant.closed_time, add_direction=True) }}.
+    </div>
+    {% elif not participant.claimed_time  %}
+    {% set absorption = website.db.one( "select * from absorptions where archived_as=%s"
+                                      , (participant.username,)
+                                       ) %}
+    <div class="admin-details mono">
+        Was {{ absorption.absorbed_was }};
+        absorbed by <a href="/{{ absorption.absorbed_by }}/">{{ absorption.absorbed_by }}</a>
+        {{ to_age(absorption.timestamp, add_direction=True) }}.
+    </div>
+    {% endif %}
+{% endif %}
+
+{{ super() }}
+{% endblock %}
+
+{% set suppress_sidebar = user.ANON or (user.participant != participant and not user.ADMIN)%}
+{% block sidebar %}
+{% set current_page = request.path.raw.split('/')[3] %}
+{% set nav_base = '/~' + participant.username %}
+{% set pages = [ ('/',           _('Profile'),   True,   True)
+               , ('/giving/',    _('Giving'),    True,   False)
+               , ('/history/',   _('History'),   True,   False)
+               , ('/emails/',    _('Emails'),    True,   False)
+               , ('/routes/',    _('Routes'),    True,   False)
+               , ('/settings/',  _('Settings'),  True,   False)
+               , ('/events/',    _('Events'),    False,  False)
+                ] %}
+{% set pages = filter_profile_nav(user, participant, pages) %}
+{% if pages %}
+<ul class="nav">
+    {% for slug, name, show_them, show_others in pages %}
+    <li><a href="{{ nav_base }}{{ slug }}"{% if slug.strip('/') == current_page.strip('/') %} class="selected"{% endif %}>{{ _(name) }}</a></li>
+    {% endfor %}
+</ul>
+{% endif %}
 {% endblock %}

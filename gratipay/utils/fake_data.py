@@ -61,7 +61,6 @@ def fake_participant(db, number="singular", is_admin=False):
                    , is_admin=is_admin
                    , balance=0
                    , anonymous_giving=(random.randrange(5) == 0)
-                   , anonymous_receiving=(number != 'plural' and random.randrange(5) == 0)
                    , balanced_customer_href=faker.uri()
                    , is_suspicious=False
                    , claimed_time=faker.date_time_this_year()
@@ -81,39 +80,40 @@ def fake_team(db, teamowner):
     productorservice = ['Product','Service']
 
     teamname = faker.first_name() + fake_text_id(3)
-    teamslugname = faker.city() 
+    teamslugname = faker.city()
 
     try:
         #using community.slugize
         teamslug = community.slugize(teamslugname)
+        homepage = 'http://www.example.org/' + fake_text_id(3)
         _fake_thing( db
                    , "teams"
                    , slug=teamslug
                    , slug_lower=teamslug.lower()
                    , name=teamname
-                   , homepage='www.example.org/' + fake_text_id(3)
+                   , homepage=homepage
                    , product_or_service=random.sample(productorservice,1)[0]
-                   , getting_involved='build'
-                   , getting_paid='paypal'
+                   , todo_url=homepage + '/tickets'
+                   , onboarding_url=homepage + '/contributing'
                    , owner=teamowner.username
                    , is_approved=random.sample(isapproved,1)[0]
                    , receiving=0.1
-                   , nmembers=3
+                   , nreceiving_from=3
                    )
     except IntegrityError:
         return fake_team(db, teamowner)
 
     return Team.from_slug(teamslug)
 
-def fake_subscription(db, subscriber, subscribee):
-    """Create a fake subscription
+def fake_payment_instruction(db, participant, team):
+    """Create a fake payment_instruction
     """
     return _fake_thing( db
-                      , "subscriptions"
+                      , "payment_instructions"
                       , ctime=faker.date_time_this_year()
                       , mtime=faker.date_time_this_month()
-                      , subscriber=subscriber.username
-                      , team=subscribee.slug
+                      , participant=participant.username
+                      , team=team.slug
                       , amount=fake_tip_amount()
                        )
 
@@ -225,54 +225,16 @@ def prep_db(db):
 
         CREATE TRIGGER process_exchange AFTER INSERT ON exchanges
             FOR EACH ROW EXECUTE PROCEDURE process_exchange();
-
-        CREATE OR REPLACE FUNCTION process_payday() RETURNS trigger AS $$
-            BEGIN
-                SELECT COALESCE(SUM(amount+fee), 0)
-                  FROM exchanges
-                 WHERE timestamp > NEW.ts_start
-                   AND timestamp < NEW.ts_end
-                   AND amount > 0
-                  INTO NEW.charge_volume;
-
-                SELECT COALESCE(SUM(fee), 0)
-                  FROM exchanges
-                 WHERE timestamp > NEW.ts_start
-                   AND timestamp < NEW.ts_end
-                   AND amount > 0
-                  INTO NEW.charge_fees_volume;
-
-                SELECT COALESCE(SUM(amount), 0)
-                  FROM exchanges
-                 WHERE timestamp > NEW.ts_start
-                   AND timestamp < NEW.ts_end
-                   AND amount < 0
-                  INTO NEW.ach_volume;
-
-                SELECT COALESCE(SUM(fee), 0)
-                  FROM exchanges
-                 WHERE timestamp > NEW.ts_start
-                   AND timestamp < NEW.ts_end
-                   AND amount < 0
-                  INTO NEW.ach_fees_volume;
-
-                RETURN NEW;
-            END;
-        $$ language plpgsql;
-
-        CREATE TRIGGER process_payday BEFORE INSERT ON paydays
-            FOR EACH ROW EXECUTE PROCEDURE process_payday();
     """)
 
 def clean_db(db):
     db.run("""
-        DROP FUNCTION process_transfer() CASCADE;
-        DROP FUNCTION process_exchange() CASCADE;
-        DROP FUNCTION process_payday() CASCADE;
+        DROP FUNCTION IF EXISTS process_transfer() CASCADE;
+        DROP FUNCTION IF EXISTS process_exchange() CASCADE;
     """)
 
 
-def populate_db(db, num_participants=100, num_tips=200, num_teams=5, num_transfers=5000, num_communities=20):
+def populate_db(db, num_participants=100, ntips=200, num_teams=5, num_transfers=5000, num_communities=20):
     """Populate DB with fake data.
     """
     print("Making Participants")
@@ -286,19 +248,19 @@ def populate_db(db, num_participants=100, num_tips=200, num_teams=5, num_transfe
     for teamowner in teamowners:
         teams.append(fake_team(db, teamowner))
 
-    print("Making Subscriptions")
-    subscriptioncount = 0
+    print("Making Payment Instructions")
+    npayment_instructions = 0
     for participant in participants:
         for team in teams:
-            #eliminate self-subscription
+            #eliminate self-payment
             if participant.username != team.owner:
-                subscriptioncount += 1
-                if subscriptioncount > num_tips:
+                npayment_instructions += 1
+                if npayment_instructions > ntips:
                     break
-                fake_subscription(db, participant, team)
-        if subscriptioncount > num_tips:
+                fake_payment_instruction(db, participant, team)
+        if npayment_instructions > ntips:
             break
-     
+
 
     print("Making Elsewheres")
     for p in participants:
@@ -318,7 +280,7 @@ def populate_db(db, num_participants=100, num_tips=200, num_teams=5, num_transfe
 
     print("Making Tips")
     tips = []
-    for i in xrange(num_tips):
+    for i in xrange(ntips):
         tipper, tippee = random.sample(participants, 2)
         tips.append(fake_tip(db, tipper, tippee))
 
@@ -374,21 +336,19 @@ def populate_db(db, num_participants=100, num_tips=200, num_teams=5, num_transfe
         payday = {
             'ts_start': date,
             'ts_end': end_date,
-            'ntips': len(week_tips),
-            'ntransfers': len(week_transfers),
-            'nparticipants': len(week_participants),
-            'ntippers': len(tippers),
-            'nactive': len(actives),
-            'transfer_volume': sum(x['amount'] for x in week_transfers)
+            'nusers': len(actives),
+            'volume': sum(x['amount'] for x in week_transfers)
         }
         _fake_thing(db, "paydays", **payday)
         date = end_date
     print("")
 
-def main():
-    db = wireup.db(wireup.env())
+
+def main(db=None, *a, **kw):
+    db = db or wireup.db(wireup.env())
+    clean_db(db)
     prep_db(db)
-    populate_db(db)
+    populate_db(db, *a, **kw)
     clean_db(db)
     check_db(db)
 

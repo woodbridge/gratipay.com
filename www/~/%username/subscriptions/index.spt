@@ -1,0 +1,3 @@
+[---]
+website.redirect('../giving/', base_url='')
+[---]

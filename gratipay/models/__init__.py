@@ -35,10 +35,10 @@ def check_db(cursor):
     """Runs all available self checks on the given cursor.
     """
     _check_balances(cursor)
+    _check_no_team_balances(cursor)
     _check_tips(cursor)
     _check_orphans(cursor)
     _check_orphans_no_tips(cursor)
-    _check_paydays_volumes(cursor)
 
 
 def _check_tips(cursor):
@@ -119,6 +119,34 @@ def _check_balances(cursor):
     """)
     assert len(b) == 0, "conflicting balances: {}".format(b)
 
+def _check_no_team_balances(cursor):
+    if cursor.one("select exists (select * from paydays where ts_end < ts_start) as running"):
+        # payday is running
+        return
+    teams = cursor.all("""
+        SELECT t.slug, balance
+          FROM (
+                SELECT team, sum(delta) as balance
+                  FROM (
+                        SELECT team, sum(-amount) AS delta
+                          FROM payments
+                         WHERE direction='to-participant'
+                      GROUP BY team
+
+                         UNION ALL
+
+                        SELECT team, sum(amount) AS delta
+                          FROM payments
+                         WHERE direction='to-team'
+                      GROUP BY team
+                       ) AS foo
+              GROUP BY team
+               ) AS foo2
+          JOIN teams t ON t.slug = foo2.team
+         WHERE balance <> 0
+    """)
+    assert len(teams) == 0, "teams with non-zero balance: {}".format(teams)
+
 
 def _check_orphans(cursor):
     """
@@ -162,84 +190,6 @@ def _check_orphans_no_tips(cursor):
          WHERE NOT EXISTS (SELECT 1 FROM elsewhere WHERE participant=username)
     """)
     assert len(orphans_with_tips) == 0, orphans_with_tips
-
-
-def _check_paydays_volumes(cursor):
-    """
-    Recalculate *_volume fields in paydays table using exchanges table.
-    """
-    if cursor.one("select exists (select * from paydays where ts_end < ts_start) as running"):
-        # payday is running
-        return
-    charge_volume = cursor.all("""
-        select * from (
-            select id, ts_start, charge_volume, (
-                    select coalesce(sum(amount+fee), 0)
-                    from exchanges
-                    where timestamp > ts_start
-                    and timestamp < ts_end
-                    and amount > 0
-                    and recorder is null
-                    and (status is null or status <> 'failed')
-                ) as ref
-            from paydays
-            order by id
-        ) as foo
-        where charge_volume != ref
-    """)
-    assert len(charge_volume) == 0
-
-    charge_fees_volume = cursor.all("""
-        select * from (
-            select id, ts_start, charge_fees_volume, (
-                    select coalesce(sum(fee), 0)
-                    from exchanges
-                    where timestamp > ts_start
-                    and timestamp < ts_end
-                    and amount > 0
-                    and recorder is null
-                    and (status is null or status <> 'failed')
-                ) as ref
-            from paydays
-            order by id
-        ) as foo
-        where charge_fees_volume != ref
-    """)
-    assert len(charge_fees_volume) == 0
-
-    ach_volume = cursor.all("""
-        select * from (
-            select id, ts_start, ach_volume, (
-                    select coalesce(sum(amount), 0)
-                    from exchanges
-                    where timestamp > ts_start
-                    and timestamp < ts_end
-                    and amount < 0
-                    and recorder is null
-                ) as ref
-            from paydays
-            order by id
-        ) as foo
-        where ach_volume != ref
-    """)
-    assert len(ach_volume) == 0
-
-    ach_fees_volume = cursor.all("""
-        select * from (
-            select id, ts_start, ach_fees_volume, (
-                    select coalesce(sum(fee), 0)
-                    from exchanges
-                    where timestamp > ts_start
-                    and timestamp < ts_end
-                    and amount < 0
-                    and recorder is null
-                ) as ref
-            from paydays
-            order by id
-        ) as foo
-        where ach_fees_volume != ref
-    """)
-    assert len(ach_fees_volume) == 0
 
 
 def add_event(c, type, payload):

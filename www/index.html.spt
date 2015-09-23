@@ -1,12 +1,45 @@
+from collections import OrderedDict
 [---]
+i18ned_statuses = { "approved": _("Approved")
+                  , "unreviewed" : _("Under Review")
+                  , "rejected": _("Rejected")
+                   }
+status_icons = { "approved": "&#xe008;"
+               , "unreviewed": "&#xe009;"
+               , "rejected": "&#xe010;"
+                }
 
-if user.ANON:
-    website.redirect('/about/')
+teams = website.db.all("""
 
-if not user.ANON:
-    participant = user.participant
-    title = participant.username
+    SELECT teams.*::teams
+      FROM teams
+  ORDER BY ctime DESC
 
+""")
+volume = website.db.one("SELECT volume FROM paydays ORDER BY ts_start DESC LIMIT 1", default=0)
+volume = int(round(volume, -2))
+
+tabs = OrderedDict()
+tabs['approved'] = {'teams': []}
+tabs['unreviewed'] = {'teams': []}
+tabs['rejected'] = {'teams': []}
+
+for team in teams:
+    tabs[team.status]['teams'].append(team)
+
+nteams = 0
+for key, tab in tabs.items():
+    n = tab['n'] = len(tab['teams'])
+    nteams += n
+    tab['name'] = '<span class="status-icon {}">{}</span> {} (n={})'.format( key
+                                                                           , status_icons[key]
+                                                                           , i18ned_statuses[key]
+                                                                           , n
+                                                                            )
+
+title = _("Teams")
+suppress_sidebar = True
+suppress_welcome = 'suppress-welcome' in request.cookie
 [---]
 {% extends "templates/base.html" %}
 {% block head_early %}
@@ -17,110 +50,115 @@ if not user.ANON:
 {% block head %}
     <link rel="publisher" href="https://plus.google.com/104524895706770139568">
     <link type="application/opensearchdescription+xml" rel="search" href="/opensearch.osdd" />
-    <meta name="description" content="Weekly payments, motivated by gratitude. Sustainably crowdfund your business, personal projects, or charity, with no extra fees." />
+    <meta name="description" content="Voluntary payments and payroll for open work" />
     <meta name="fb:app_id" content="229465400522758" />
     <meta name="og:type" content="website" />
     <meta name="og:url" content="https://gratipay.com/" />
     <meta name="og:title" content="Gratipay" />
     <meta name="og:image" content="{{ website.asset('gratipay.opengraph.png') }}" />
-    {% if user.ANON %}
-    <style>
-        #header, #footer { display: none; }
-        #upgrade_browser .container { display: block; }
-    </style>
-    {% endif %}
 {% endblock %}
 
-{% block sidebar %}
-{% if user.ANON %}
-    <img src="{{ website.asset('gratipay.white.svg') }}" alt="Gratipay">
-    <h1>{{ _("Weekly Payments") }}</h1>
-    <p>{{ _("Motivated by Gratitude") }}</p>
-
-    <p>{{ _("Sustainably crowdfund your business, personal projects, or charity, with {0}no extra fees{1}.",
-            "<span>"|safe, "</span>"|safe) }}</p>
-
-    <p><a href="/about/">{{ _("Learn more") }}</a></p>
-{% else %}
-{% include "templates/profile-sidebar.html" %}
-{% endif %}
-{% endblock %}
-
-{% block heading %}{{ super() if not user.ANON }}{% endblock %}
-{% block subnav %}
-{% if not user.ANON %}{% include "templates/profile-subnav.html" %}{% endif %}
+{% block banner %}
+    <a href="/about/" class="homepage">
+        {{ _("Payments{br}and Payroll{br}for Open Work", br='<br>'|safe) }}<br>
+        <u>{{ _("Read more") }}&hellip;</u>
+    </a>
+</a>
 {% endblock %}
 
 {% block content %}
-    {% if user.ANON %}
+{% if not suppress_welcome %}
+<div class="welcome">
+    <p><b>{{ _("Welcome to Gratipay!") }}</b></p>
+    <p>{{ _( "We have {nteams} Teams receiving and sharing about {volume} each week."
+           , nteams=tabs['approved']['n']
+           , volume=format_currency(volume, 'USD', trailing_zeroes=False)
+            ) }}</p>
+    <p>{{ _( "Continue to explore our Teams, or {a}read more about us{_a}."
+           , a='<a href="/about/">'|safe
+           , _a='</a>'|safe
+            ) }}</p>
+    <div class="continue">
+        <button>{{ _("Continue") }}</button>
+    </div>
+</div>
+{% endif %}
 
-        {{ _("{0}Sign In{1} {2}to Accept Weekly Payments{3}",
-             "<h1>"|safe, "</h1>"|safe, "<p>"|safe, "</p>"|safe) }}
-        {% from 'templates/auth.html' import auth_button with context %}
+<form action="new" class="apply">
+    <button type="submit">{{ _("Apply for a New Team") }}</button>
+</form>
 
-        <div class="twitter">
-        {% call auth_button('twitter', 'opt-in') %}
-        {{ _("Sign in with {0}", "Twitter") }}
-        {% endcall %}
-        </div>
+<div class="tabs">
+    <ul class="nav" id="tab-nav">
+        {% for tab in tabs %}
+        <li><a href="#" data-tab="{{ tab }}">{{ tabs[tab]['name']|safe }}</a></li>
+        {% endfor %}
+    </ul>
 
-        <div class="other">
-            <div class="or">{{ _("Or sign in with:") }}</div>
-            <span>
-            {% call auth_button('google', 'opt-in') %}Google{% endcall %}
-            {% call auth_button('facebook', 'opt-in') %}Facebook{% endcall %}
-            {% call auth_button('github', 'opt-in') %}GitHub{% endcall %}
-            {% call auth_button('bitbucket', 'opt-in') %}Bitbucket{% endcall %}
-            {% call auth_button('openstreetmap', 'opt-in') %}OpenStreetMap{% endcall %}
-            </span>
-        </div>
+    {% for tab in tabs %}
+    <table class="teams tab" data-tab="{{ tab }}">
+        {% for i, team in enumerate(tabs[tab]['teams'], start=1) %}
+        <tr>
+            <td class="team">
+                <img src="{{ team.get_image_url('small') }}">
+                <a class="name" href="/{{ team.slug }}/">{{ team.name }}</a>
 
-        <p class="other">{{
-            _("By signing in, you indicate that you have read and agree to our {0}Terms of Service{1}.",
-              "<a href='/about/terms/'>"|safe, "</a>"|safe) + " " +
-            _("You'll be joining {0} active users, who exchanged {1} {2}last week{3}.",
-              format_number(website.gnactive),
-              format_currency(website.gtransfer_volume, "USD"),
-              "<a href='/about/stats'>"|safe, "</a>"|safe) + " " +
-            _("Want to see who they are? Browse {0}our communities{1}.",
-              "<a href='/for/'>"|safe, "</a>"|safe) + " " +
-            _("Want to work for Gratipay? We are an {0}open company{1}.",
-              "<a href='http://inside.gratipay.com/big-picture/welcome'>"|safe,
-              "</a>"|safe) }}</p>
+                <div class="details">
+                    <span class="i">{{ i }}</span>
+                    <span class="status">&middot;
+                        <a href="{{ team.review_url }}"><span
+                            class="status-icon {{ team.status }}"
+                            >{{ status_icons[team.status]|safe }}</span
+                            >{{ i18ned_statuses[team.status] }}</a>
+                    </span>
+                    <span class="ctime">&middot; {{ _("created {ago}",
+                        ago=to_age(team.ctime, add_direction=True)) }}</span>
+                    <span class="owner">&middot;
+                        {{ _( "owned by {a}{owner}{_a}"
+                            , owner='~'+team.owner
+                            , a=('<a class="owner" href="/~{}/">'|safe).format(team.owner)
+                            , _a='</a>'|safe
+                             ) }}
+                    </span>
+                </div>
 
-    {% else %}
+                {% if team.status == 'approved' %}
+                <table class="numbers mono">
+                    <tr>
+                        <th class="label">{{ _("Weekly") }}</th>
+                        <th>&#x03A3; &nbsp;</th>
+                        <th>n</th>
+                    </tr>
+                    <tr>
+                        <td class="label">{{ _("Receiving") }}</td>
+                        <td>{{ format_currency(team.receiving, 'USD')
+                                if team.receiving else '- &nbsp;'|safe }}</td>
+                        <td>{{ team.nreceiving_from if team.nreceiving_from else '-' }}</td>
+                    </tr>
+                    <tr>
+                        <td class="label">{{ _("Sharing") }}</td>
+                        <td>- &nbsp;</td>
+                        <td>-</td>
+                    </tr>
+                </table>
+                {% endif %}
+            </td>
+        </tr>
+        {% endfor %}
+    </table>
+    {% endfor %}
+</div>
+{% endblock %}
 
-        <div class="col0">
-            <h2>{{ _("Giving") }}</h2>
 
-            <p><a href="/{{ participant.username }}/subscriptions/">{{
-                _("You pay {0} per week.", format_currency(participant.giving, 'USD'))
-            }}</a></p>
-
-            <p>{{ _("Who inspires you? See if they're on Gratipay:") }}</p>
-            {% include "templates/search-box.html" %}
-
-            <p>{{ _("Find your friends from social networks:") }}<br>
-            {% for p in website.friends_platforms %}
-                <a href="/on/{{ p.name }}/">{{ p.display_name }}</a
-                >{{ ',' if not loop.last }}
-            {% endfor %}
-            </p>
-
-            <h2>{{ _("Receiving") }}</h2>
-
-            <p><a href="/{{ participant.username }}/receiving/">{{
-                _("You receive {0} per week.", format_currency(participant.receiving, 'USD'))
-            }}</a></p>
-
-            <p>{{ _("To receive money, do something awesome and then tell people about it:") }}</p>
-            <ol>
-                <li>{{ _("{0}Fill out your profile{1} to let others know about you.",
-                         "<a href='/%s/'>"|safe % participant.username, "</a>"|safe) }}</li>
-                <li>{{ _("Reach a wider audience by {0}embedding our widgets{1} on your blog/website.",
-                         "<a href='/%s/widgets'>"|safe % participant.username, "</a>"|safe) }}</li>
-            </ol>
-        </div>
-
-    {% endif %}
+{% block scripts %}
+<script>
+    $(document).ready(function () {
+        $('.welcome button').click(function() {
+            console.log('suppressing welcome ...');
+            document.cookie = 'suppress-welcome=';
+            $(this).parent().parent().fadeOut(100);
+        });
+    });
+</script>
 {% endblock %}

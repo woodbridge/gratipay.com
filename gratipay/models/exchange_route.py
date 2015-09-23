@@ -1,6 +1,5 @@
 from __future__ import absolute_import, division, print_function, unicode_literals
 
-import balanced
 import braintree
 from postgres.orm import Model
 
@@ -16,11 +15,15 @@ class ExchangeRoute(Model):
 
     @classmethod
     def from_id(cls, id):
-        return cls.db.one("""
+        r = cls.db.one("""
             SELECT r.*::exchange_routes
               FROM exchange_routes r
              WHERE id = %(id)s
         """, locals())
+        if r:
+            from gratipay.models.participant import Participant  # XXX Red hot hack!
+            r.set_attributes(participant=Participant.from_id(r.participant))
+        return r
 
     @classmethod
     def from_network(cls, participant, network):
@@ -32,7 +35,7 @@ class ExchangeRoute(Model):
                AND network = %(network)s
         """, locals())
         if r:
-            r.__dict__['participant'] = participant
+            r.set_attributes(participant=participant)
         return r
 
     @classmethod
@@ -46,19 +49,8 @@ class ExchangeRoute(Model):
                AND address = %(address)s
         """, locals())
         if r:
-            r.__dict__['participant'] = participant
+            r.set_attributes(participant=participant)
         return r
-
-    @classmethod
-    def associate_balanced(cls, participant, balanced_account, network, address):
-        if network == 'balanced-cc':
-            obj = balanced.Card.fetch(address)
-        else:
-            assert network == 'balanced-ba', network # sanity check
-            obj = balanced.BankAccount.fetch(address)
-        obj.associate_to_customer(balanced_account)
-
-        return cls.insert(participant, network, address)
 
     @classmethod
     def insert(cls, participant, network, address, error='', fee_cap=None):
@@ -69,27 +61,24 @@ class ExchangeRoute(Model):
                  VALUES (%(participant_id)s, %(network)s, %(address)s, %(error)s, %(fee_cap)s)
               RETURNING exchange_routes.*::exchange_routes
         """, locals())
-        if network == 'balanced-cc':
-            participant.update_giving_and_tippees()
-        r.__dict__['participant'] = participant
+        if network == 'braintree-cc':
+            participant.update_giving_and_teams()
+        r.set_attributes(participant=participant)
         return r
 
     def invalidate(self):
-        if self.network == 'balanced-ba':
-            balanced.BankAccount.fetch(self.address).delete()
-        elif self.network == 'balanced-cc':
-            balanced.Card.fetch(self.address).unstore()
-        elif self.network == 'braintree-cc':
+        if self.network == 'braintree-cc':
             braintree.PaymentMethod.delete(self.address)
 
         # For Paypal, we remove the record entirely to prevent
         # an integrity error if the user tries to add the route again
         if self.network == 'paypal':
+            # XXX This doesn't sound right. Doesn't this corrupt history pages?
             self.db.run("DELETE FROM exchange_routes WHERE id=%s", (self.id,))
         else:
             self.update_error('invalidated')
 
-    def update_error(self, new_error, propagate=True):
+    def update_error(self, new_error):
         id = self.id
         old_error = self.error
         if old_error == 'invalidated':
@@ -101,9 +90,19 @@ class ExchangeRoute(Model):
         """, locals())
         self.set_attributes(error=new_error)
 
-        # Update the receiving amounts of tippees if requested and necessary
-        if not propagate or self.network != 'balanced-cc':
+        # Update cached amounts if requested and necessary
+        if self.network != 'braintree-cc':
             return
         if self.participant.is_suspicious or bool(new_error) == bool(old_error):
             return
-        self.participant.update_giving_and_tippees()
+
+
+        # XXX *White* hot hack!
+        # =====================
+        # During payday, participant is a record from a select of
+        # payday_participants (or whatever), *not* an actual Participant
+        # object. We need the real deal so we can use a method on it ...
+
+        from gratipay.models.participant import Participant
+        participant = Participant.from_username(self.participant.username)
+        participant.update_giving_and_teams()

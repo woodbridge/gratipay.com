@@ -6,12 +6,15 @@ import itertools
 import unittest
 from collections import defaultdict
 from os.path import dirname, join, realpath
+from decimal import Decimal
 
+import gratipay
 from aspen import resources
 from aspen.utils import utcnow
 from aspen.testing.client import Client
 from gratipay.billing.exchanges import record_exchange, record_exchange_result
 from gratipay.elsewhere import UserInfo
+from gratipay.exceptions import NoSelfTipping, NoTippee, BadAmount
 from gratipay.main import website
 from gratipay.models.account_elsewhere import AccountElsewhere
 from gratipay.models.exchange_route import ExchangeRoute
@@ -150,9 +153,9 @@ class Harness(unittest.TestCase):
             try: _kw['owner'] = a[1]
             except IndexError: pass
         if 'name' not in _kw:
-            _kw['name'] = "The A Team"
+            _kw['name'] = "The Enterprise"
         if 'owner' not in _kw:
-            _kw['owner'] = "hannibal"
+            _kw['owner'] = "picard"
         elif isinstance(_kw['owner'], Participant):
             _kw['owner'] = _kw['owner'].username
         if 'slug' not in _kw:
@@ -167,11 +170,10 @@ class Harness(unittest.TestCase):
 
         team = self.db.one("""
             INSERT INTO teams
-                        (slug, slug_lower, name, homepage, product_or_service,
-                         getting_involved, getting_paid, owner, is_approved)
-                 VALUES (%(slug)s, %(slug_lower)s, %(name)s, %(homepage)s,
-                         %(product_or_service)s, %(getting_involved)s, %(getting_paid)s,
-                         %(owner)s, %(is_approved)s)
+                        (slug, slug_lower, name, homepage, product_or_service, todo_url,
+                         onboarding_url, owner, is_approved)
+                 VALUES (%(slug)s, %(slug_lower)s, %(name)s, %(homepage)s, %(product_or_service)s,
+                         %(todo_url)s, %(onboarding_url)s, %(owner)s, %(is_approved)s)
               RETURNING teams.*::teams
         """, _kw)
 
@@ -233,4 +235,105 @@ class Harness(unittest.TestCase):
         return e_id
 
 
+    def make_tip(self, tipper, tippee, amount, cursor=None):
+        """Given a Participant or username, and amount as str, returns a dict.
+
+        We INSERT instead of UPDATE, so that we have history to explore. The
+        COALESCE function returns the first of its arguments that is not NULL.
+        The effect here is to stamp all tips with the timestamp of the first
+        tip from this user to that. I believe this is used to determine the
+        order of transfers during payday.
+
+        The dict returned represents the row inserted in the tips table, with
+        an additional boolean indicating whether this is the first time this
+        tipper has tipped (we want to track that as part of our conversion
+        funnel).
+
+        This is the old Participant.set_tip_to method, migrated here to support
+        testing that still needs tips (take over, tip migration)
+
+        """
+        assert tipper.is_claimed  # sanity check
+
+        if not isinstance(tippee, Participant):
+            tippee, u = Participant.from_username(tippee), tippee
+            if not tippee:
+                raise NoTippee(u)
+
+        if tipper.username == tippee.username:
+            raise NoSelfTipping
+
+        amount = Decimal(amount)  # May raise InvalidOperation
+        if (amount < gratipay.MIN_TIP) or (amount > gratipay.MAX_TIP):
+            raise BadAmount
+
+        # Insert tip
+        NEW_TIP = """\
+
+            INSERT INTO tips
+                        (ctime, tipper, tippee, amount)
+                 VALUES ( COALESCE (( SELECT ctime
+                                        FROM tips
+                                       WHERE (tipper=%(tipper)s AND tippee=%(tippee)s)
+                                       LIMIT 1
+                                      ), CURRENT_TIMESTAMP)
+                        , %(tipper)s, %(tippee)s, %(amount)s
+                         )
+              RETURNING *
+                      , ( SELECT count(*) = 0 FROM tips WHERE tipper=%(tipper)s ) AS first_time_tipper
+
+        """
+        args = dict(tipper=tipper.username, tippee=tippee.username, amount=amount)
+        t = (cursor or self.db).one(NEW_TIP, args)
+
+        if tippee.username == 'Gratipay':
+            # Update whether the tipper is using Gratipay for free
+            tipper.update_is_free_rider(None if amount == 0 else False, cursor)
+
+        return t._asdict()
+
+
+    def get_tip(self, tipper, tippee):
+        """Given a username, returns a dict.
+        """
+        default = dict(amount=Decimal('0.00'), is_funded=False)
+        return self.db.one("""\
+
+            SELECT *
+              FROM tips
+             WHERE tipper=%s
+               AND tippee=%s
+          ORDER BY mtime DESC
+             LIMIT 1
+
+        """, (tipper, tippee), back_as=dict, default=default)['amount']
+
+
 class Foobar(Exception): pass
+
+
+def debug_http():
+    """Turns on debug logging for HTTP traffic. Happily, this includes VCR usage.
+
+    http://stackoverflow.com/a/16630836
+
+    """
+    import logging
+
+    # These two lines enable debugging at httplib level
+    # (requests->urllib3->http.client) You will see the REQUEST, including
+    # HEADERS and DATA, and RESPONSE with HEADERS but without DATA.  The
+    # only thing missing will be the response.body which is not logged.
+    try:
+        import http.client as http_client
+    except ImportError:
+        # Python 2
+        import httplib as http_client
+    http_client.HTTPConnection.debuglevel = 1
+
+    # You must initialize logging, otherwise you'll not see debug output.
+    logging.basicConfig()
+    logging.getLogger().setLevel(logging.DEBUG)
+    requests_log = logging.getLogger("requests.packages.urllib3")
+    requests_log.setLevel(logging.DEBUG)
+    requests_log.propagate = True

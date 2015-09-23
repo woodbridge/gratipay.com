@@ -1,3 +1,7 @@
+import zipfile
+from cStringIO import StringIO
+
+import requests
 from aspen import Response
 
 from gratipay.models.community import slugize
@@ -8,48 +12,85 @@ request.allow('POST')
 
 field_names = {
     'name': 'Team Name',
-    'homepage': 'Homepage',
+    'image': 'Image',
     'product_or_service': 'Product or Service',
-    'revenue_model': 'Revenue Model',
-    'getting_involved': 'Contributing',
-    'getting_paid': 'Paying Contributors'
+    'homepage': 'Homepage',
+    'onboarding_url': 'Self-onboarding Documentation URL',
+    'todo_url': 'To-do URL',
 }
 
 if user.ANON:
     raise Response(401, _("You must sign in to apply for a new team."))
-
 if user.participant.email_address is None:
     raise Response(400, _("You must have a verified email address to apply for a new team."))
-
 if not user.participant.has_payout_route:
-    raise Response(400, _("You must attach a bank account or PayPal to apply for a new team."))
+    raise Response(400, _("You must attach a PayPal account to apply for a new team."))
 
 if user.participant.claimed_time is None \
 or user.participant.is_suspicious is True \
 or user.participant.is_closed:  # sanity checks
     raise Response(400, _("How are you applying for a team!?"))
 
+if not request.body.get('agree_public', False):
+    raise Response(400, _("Sorry, you must agree to have your application publicly reviewed."))
+if not request.body.get('agree_payroll', False):
+    raise Response(400, _("Sorry, you must agree to be responsible for payroll."))
 if not request.body.get('agree_terms', False):
-    raise Response(400, _("Please agree to the terms of service."))
+    raise Response(400, _("Sorry, you must agree to the terms of service."))
 
 if request.method == 'POST':
     fields = {}
+    image = None
+    image_type = None
+
 
     # Validate inputs
 
     for field in field_names.keys():
-        value = request.body.get(field, '').strip(' ')
+        if field == 'image':
+            image = value = request.body[field].value  # file upload
+            image_type = request.body[field].type
+        else:
+            value = request.body.get(field, '').strip(' ')
         if not value:
-            raise Response(400, _("Please fill out the '{0}' field.", field_names[field]))
-
+            raise Response(400, _("Please fill out the '{}' field.", field_names[field]))
         fields[field] = value
+
+    for field in ('homepage', 'onboarding_url', 'todo_url'):
+        if not any(map(fields[field].lower().startswith, ('http://', 'https://'))):
+            raise Response(400, _( "Please enter an http[s]:// URL for the '{}' field."
+                                 , field_names[field]
+                                  ))
 
     fields['slug'] = slugize(fields['name'])
 
+    if image_type not in ('image/png', 'image/jpeg'):
+        raise Response(400, _("Please upload a PNG or JPG image."))
+
     try:
-        Team.insert(user.participant, **fields)
+        team = Team.insert(user.participant, **fields)
     except IntegrityError:
         raise Response(400, _("Sorry, there is already a team using '{}'.", fields['slug']))
 
+    crops = requests.post('http://gip.rocks/v1', data=image, headers={'Content-Type': image_type})
+    if crops.status_code == 200:
+        zf = zipfile.ZipFile(StringIO(crops.content))
+        original = image
+        large = zf.open('160').read()
+        small = zf.open('48').read()
+        team.save_image(original, large, small, image_type)
+    elif crops.status_code == 413:
+        raise Response(400, _("Please upload an image smaller than 100 kB."))
+    elif crops.status_code == 415:
+        raise Response(400, _("Please upload a PNG or JPG image."))
+    else:
+        raise Response(500, _("Sorry, there was a problem saving your image. Please try again."))
+
+
+    review_url = team.create_github_review_issue()
+    team.set_review_url(review_url)
+
+    team_url = website.env.base_url + '/{}/'.format(team.slug)
+
 [---] application/json via json_dump
-{'email': user.participant.email_address}
+{'review_url': review_url, 'team_url': team_url}

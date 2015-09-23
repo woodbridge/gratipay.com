@@ -2,7 +2,6 @@
 """
 from collections import OrderedDict
 
-from gratipay.models import community
 from gratipay.utils import excerpt_intro, get_participant, markdown
 
 LONG_STATEMENT = 256
@@ -10,7 +9,7 @@ LONG_STATEMENT = 256
 [-----------------------------------------------------------------------------]
 
 participant = get_participant(state, restrict=False)
-title = username = participant.username
+banner = '~' + participant.username
 
 accounts = participant.get_accounts_elsewhere()
 
@@ -23,7 +22,6 @@ if user.participant == participant:
     select_langs.update(locale.languages_2)
     stmt_placeholder = _("You don't have a profile statement in this language yet.")
     confirm_discard = _("You haven't saved your changes, are you sure you want to discard them?")
-communities = community.get_list_for(website.db, participant.id)
 
 def with_others(obj):
     others = obj.nmembers - 1
@@ -34,9 +32,9 @@ def with_others(obj):
 
 {% block head %}
     <link rel="payment" type="text/html" title="Give weekly gift on Gratipay"
-        href="https://gratipay.com/{{ username }}/" />
+        href="https://gratipay.com/{{ participant.username }}/" />
     <meta name="twitter:card" content="summary" />
-    <meta name="og:url" content="https://gratipay.com/{{ username }}/" />
+    <meta name="og:url" content="https://gratipay.com/{{ participant.username }}/" />
     <meta name="og:type" content="profile" />
     <meta name="og:title" content="{{ participant.get_og_title() }}" />
     {% if statement %}
@@ -56,20 +54,14 @@ def with_others(obj):
         {% include "templates/profile-edit.html" %}
     </div>
 {% else %}
-    <div class="clearfix">
-        <div class="col0">
-            {% if statement %}
-            <h2>{{ _("Statement") }}</h2>
-            <div class="statement profile-statement">
-                {{ markdown.render(statement) }}
-            </div>
-            {% endif %}
-
-            {% include "templates/team-listing.html" %}
-            {% include "templates/community-listing.html" %}
-            {% include "templates/connected-accounts.html" %}
-        </div>
+    {% if statement %}
+    <div class="statement profile-statement">
+        {{ markdown.render(statement) }}
     </div>
+    {% endif %}
+
+    {% include "templates/team-listing.html" %}
+    {% include "templates/connected-accounts.html" %}
 {% endif %}
 {% endblock %}
 
