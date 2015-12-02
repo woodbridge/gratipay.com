@@ -216,8 +216,8 @@ class TestPages(Harness):
         assert  "Braintree" in body
 
     def test_teams_page_shows_due(self):
-        alice = self.make_participant('alice', claimed_time='now')
-        team = self.make_team(is_approved=True)
+        self.make_participant('alice', claimed_time='now')
+        self.make_team(is_approved=True)
         self.db.run("UPDATE teams SET due = 5.00 WHERE owner = 'picard'")
         page_body = self.client.GET("/", auth_as="alice").body
         assert "TheEnterprise" in page_body
