@@ -1013,15 +1013,17 @@ class Participant(Model):
                AND p.id != %(id)s
         """, dict(username=self.username,team=team,id=id))
 
-        # Update summary value in teams
+        # Update summary values in teams
         (cursor or self.db).run("""
             UPDATE teams t
-               SET due = pi.due
-              FROM (select team, sum(due) as due
+               SET due = pi.due, ndue = pi.ndue
+              FROM (select team, sum(due) as due, count(*) as ndue
               FROM payment_instructions
+             WHERE due > 0
           GROUP BY team) as pi
              WHERE t.slug = pi.team
-        """)
+               AND t.slug = %(team)s
+        """, dict(team=team))
 
     def _reset_due(self, team, except_for=-1, cursor=None):
         (cursor or self.db).run("""
