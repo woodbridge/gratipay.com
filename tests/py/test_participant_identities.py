@@ -239,3 +239,32 @@ class Tests(Harness):
                           , [self.TTO, self.TTO]
                           , ['verify identity', 'unverify identity']
                            )
+
+
+    # ci - clear_identity
+
+    def test_ci_clears_identity(self):
+        crusher = self.make_participant('crusher')
+        crusher.store_identity_info(self.TTO, 'nothing-enforced', {'name': 'Crusher'})
+        assert crusher.clear_identity(self.TTO) is None
+        assert crusher.list_identity_metadata() == []
+
+    def test_ci_is_a_noop_when_there_is_no_identity(self):
+        crusher = self.make_participant('crusher')
+        assert crusher.clear_identity(self.TTO) is None
+        assert crusher.list_identity_metadata() == []
+
+    def test_ci_logs_an_event(self):
+        crusher = self.make_participant('crusher')
+        iid = crusher.store_identity_info(self.TTO, 'nothing-enforced', {'name': 'Crusher'})
+        crusher.clear_identity(self.TTO)
+        self.assert_events( crusher.id
+                          , [iid, iid]
+                          , [self.TTO, self.TTO]
+                          , ['insert identity', 'clear identity']
+                           )
+
+    def test_ci_still_logs_an_event_when_noop(self):
+        crusher = self.make_participant('crusher')
+        crusher.clear_identity(self.TTO)
+        self.assert_events(crusher.id, [None], [self.TTO], ['clear identity'])
