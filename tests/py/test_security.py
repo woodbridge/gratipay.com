@@ -4,7 +4,7 @@ from aspen import Response
 from aspen.http.request import Request
 from base64 import urlsafe_b64decode
 from gratipay import security
-from gratipay.models.participant import Participant
+from gratipay.models.participant.mixins import Identity
 from gratipay.testing import Harness
 from pytest import raises
 
@@ -49,14 +49,14 @@ class TestSecurity(Harness):
     # ep - EncryptingPacker
 
     def test_ep_packs_encryptingly(self):
-        packed = Participant.encrypting_packer.pack({"foo": "bar"})
+        packed = Identity.encrypting_packer.pack({"foo": "bar"})
         assert urlsafe_b64decode(packed)[0] == b'\x80'  # Frenet version
 
     def test_ep_unpacks_decryptingly(self):
         packed = b'gAAAAABXJMbdriJ984uMCMKfQ5p2UUNHB1vG43K_uJyzUffbu2Uwy0d71kAnqOKJ7Ww_FEQz9Dliw8'\
                  b'7UpM5TdyoJsll5nMAicg=='
-        assert Participant.encrypting_packer.unpack(packed) == {"foo": "bar"}
+        assert Identity.encrypting_packer.unpack(packed) == {"foo": "bar"}
 
     def test_ep_demands_bytes(self):
-        raises(TypeError, Participant.encrypting_packer.unpack, buffer('buffer'))
-        raises(TypeError, Participant.encrypting_packer.unpack, 'unicode')
+        raises(TypeError, Identity.encrypting_packer.unpack, buffer('buffer'))
+        raises(TypeError, Identity.encrypting_packer.unpack, 'unicode')
