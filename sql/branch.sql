@@ -36,3 +36,35 @@ CREATE TRIGGER enforce_email_for_participant_identity
     BEFORE INSERT ON participant_identities
     FOR EACH ROW
     EXECUTE PROCEDURE fail_if_no_email();
+
+
+-- participants.has_verified_identity
+
+ALTER TABLE participants ADD COLUMN has_verified_identity bool NOT NULL DEFAULT false;
+
+CREATE FUNCTION update_has_verified_identity() RETURNS trigger AS $$
+    BEGIN
+        UPDATE participants p
+           SET has_verified_identity=COALESCE((
+                SELECT is_verified
+                  FROM participant_identities
+                 WHERE participant_id = OLD.participant_id
+                   AND is_verified
+                 LIMIT 1
+               ), false)
+         WHERE p.id = OLD.participant_id;
+        RETURN NULL;
+    END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER propagate_is_verified_changes
+    AFTER UPDATE OF is_verified ON participant_identities
+    FOR EACH ROW
+    EXECUTE PROCEDURE update_has_verified_identity();
+
+CREATE TRIGGER propagate_is_verified_removal
+    AFTER DELETE ON participant_identities
+    FOR EACH ROW
+    EXECUTE PROCEDURE update_has_verified_identity();
+
+-- We don't need an INSERT trigger, because of the way the defaults play out.
