@@ -1,10 +1,12 @@
 from __future__ import absolute_import, division, print_function, unicode_literals
 
 from gratipay.testing import Harness
+from gratipay.models.participant import Participant
 from gratipay.models.participant.mixins import identity, Identity
 from gratipay.models.participant.mixins.identity import _validate_info
 from gratipay.models.participant.mixins.identity import ParticipantIdentityInfoInvalid
 from gratipay.models.participant.mixins.identity import ParticipantIdentitySchemaUnknown
+from postgres.orm import ReadOnly
 from pytest import raises
 
 
@@ -268,3 +270,95 @@ class Tests(Harness):
         crusher = self.make_participant('crusher')
         crusher.clear_identity(self.TTO)
         self.assert_events(crusher.id, [None], [self.TTO], ['clear identity'])
+
+
+    # hvi - has_verified_identity
+
+    def test_hvi_defaults_to_false(self):
+        crusher = self.make_participant('crusher')
+        assert crusher.has_verified_identity is False
+
+    def test_hvi_is_read_only(self):
+        crusher = self.make_participant('crusher')
+        with raises(ReadOnly):
+            crusher.has_verified_identity = True
+
+    def test_hvi_becomes_true_when_an_identity_is_verified(self):
+        crusher = self.make_participant('crusher')
+        crusher.store_identity_info(self.TTO, 'nothing-enforced', {})
+        crusher.set_identity_verification(self.TTO, True)
+        assert Participant.from_username('crusher').has_verified_identity
+
+    def test_hvi_becomes_false_when_the_identity_is_unverified(self):
+        crusher = self.make_participant('crusher')
+        crusher.store_identity_info(self.TTO, 'nothing-enforced', {})
+        crusher.set_identity_verification(self.TTO, True)
+        crusher.set_identity_verification(self.TTO, False)
+        assert not Participant.from_username('crusher').has_verified_identity
+
+    def test_hvi_stays_true_when_a_secondary_identity_is_verified(self):
+        crusher = self.make_participant('crusher')
+        crusher.store_identity_info(self.USA, 'nothing-enforced', {})
+        crusher.set_identity_verification(self.USA, True)
+        crusher.store_identity_info(self.TTO, 'nothing-enforced', {})
+        crusher.set_identity_verification(self.TTO, True)
+        assert Participant.from_username('crusher').has_verified_identity
+
+    def test_hvi_stays_true_when_the_secondary_identity_is_unverified(self):
+        crusher = self.make_participant('crusher')
+        crusher.store_identity_info(self.USA, 'nothing-enforced', {})
+        crusher.set_identity_verification(self.USA, True)
+        crusher.store_identity_info(self.TTO, 'nothing-enforced', {})
+        crusher.set_identity_verification(self.TTO, True)
+        crusher.set_identity_verification(self.TTO, False)
+        assert Participant.from_username('crusher').has_verified_identity
+
+    def test_hvi_goes_back_to_false_when_both_are_unverified(self):
+        crusher = self.make_participant('crusher')
+        crusher.store_identity_info(self.USA, 'nothing-enforced', {})
+        crusher.store_identity_info(self.TTO, 'nothing-enforced', {})
+        crusher.set_identity_verification(self.TTO, True)
+        crusher.set_identity_verification(self.USA, True)
+        crusher.set_identity_verification(self.TTO, False)
+        crusher.set_identity_verification(self.USA, False)
+        assert not Participant.from_username('crusher').has_verified_identity
+
+    def test_hvi_changes_are_scoped_to_a_participant(self):
+        crusher = self.make_participant('crusher')
+        crusher.store_identity_info(self.USA, 'nothing-enforced', {})
+
+        bruiser = self.make_participant('bruiser')
+        bruiser.store_identity_info(self.USA, 'nothing-enforced', {})
+
+        crusher.set_identity_verification(self.USA, True)
+
+        assert Participant.from_username('crusher').has_verified_identity
+        assert not Participant.from_username('bruiser').has_verified_identity
+
+    def test_hvi_resets_when_identity_is_cleared(self):
+        crusher = self.make_participant('crusher')
+        crusher.store_identity_info(self.TTO, 'nothing-enforced', {})
+        crusher.set_identity_verification(self.TTO, True)
+        crusher.clear_identity(self.TTO)
+        assert not Participant.from_username('crusher').has_verified_identity
+
+    def test_hvi_doesnt_reset_when_penultimate_identity_is_cleared(self):
+        crusher = self.make_participant('crusher')
+        crusher.store_identity_info(self.USA, 'nothing-enforced', {})
+        crusher.set_identity_verification(self.USA, True)
+        crusher.store_identity_info(self.TTO, 'nothing-enforced', {})
+        crusher.set_identity_verification(self.TTO, True)
+        crusher.set_identity_verification(self.TTO, False)
+        crusher.clear_identity(self.TTO)
+        assert Participant.from_username('crusher').has_verified_identity
+
+    def test_hvi_does_reset_when_both_identities_are_cleared(self):
+        crusher = self.make_participant('crusher')
+        crusher.store_identity_info(self.USA, 'nothing-enforced', {})
+        crusher.store_identity_info(self.TTO, 'nothing-enforced', {})
+        crusher.set_identity_verification(self.USA, True)
+        crusher.set_identity_verification(self.TTO, True)
+        crusher.set_identity_verification(self.TTO, False)
+        crusher.set_identity_verification(self.USA, False)
+        crusher.clear_identity(self.TTO)
+        assert not Participant.from_username('crusher').has_verified_identity
