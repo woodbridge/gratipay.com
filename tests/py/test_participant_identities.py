@@ -80,11 +80,40 @@ class Tests(Harness):
         crusher.store_identity_info(self.USA, 'nothing-enforced', {'name': 'Crusher'})
         assert [x.country.code3 for x in crusher.list_identity_metadata()] == ['USA']
 
+    def test_lim_lists_the_latest_identity_metadata(self):
+        crusher = self.make_participant('crusher')
+        crusher.store_identity_info(self.USA, 'nothing-enforced', {'name': 'Crusher'})
+        crusher.set_identity_verification(self.USA, True)
+        crusher.store_identity_info(self.USA, 'nothing-enforced', {'name': 'Bruiser'})
+        assert [x.is_verified for x in crusher.list_identity_metadata()] == [False]
+
     def test_lim_lists_metadata_for_multiple_identities(self):
         crusher = self.make_participant('crusher')
         for country in (self.USA, self.TTO):
             crusher.store_identity_info(country, 'nothing-enforced', {'name': 'Crusher'})
         assert [x.country.code3 for x in crusher.list_identity_metadata()] == ['TTO', 'USA']
+
+    def test_lim_lists_latest_metadata_for_multiple_identities(self):
+        crusher = self.make_participant('crusher')
+        for country_id in (self.USA, self.TTO):
+            crusher.store_identity_info(country_id, 'nothing-enforced', {'name': 'Crusher'})
+            crusher.set_identity_verification(country_id, True)
+            crusher.store_identity_info(country_id, 'nothing-enforced', {'name': 'Bruiser'})
+        ids = crusher.list_identity_metadata()
+        assert [x.country.code3 for x in ids] == ['TTO', 'USA']
+        assert [x.is_verified for x in ids] == [False, False]
+
+    def test_lim_can_filter_on_is_verified(self):
+        crusher = self.make_participant('crusher')
+        for country_id in (self.USA, self.TTO):
+            crusher.store_identity_info(country_id, 'nothing-enforced', {'name': 'Crusher'})
+        crusher.set_identity_verification(self.TTO, True)
+
+        ids = crusher.list_identity_metadata(is_verified=True)
+        assert [x.country.code3 for x in ids] == ['TTO']
+
+        ids = crusher.list_identity_metadata(is_verified=False)
+        assert [x.country.code3 for x in ids] == ['USA']
 
 
     # sii - store_identity_info
@@ -106,6 +135,15 @@ class Tests(Harness):
         crusher.store_identity_info(self.TTO, 'nothing-enforced', {'name': 'Bruiser'})
         assert [x.country.code3 for x in crusher.list_identity_metadata()] == ['TTO']
         assert crusher.retrieve_identity_info(self.TTO)['name'] == 'Bruiser'
+
+    def test_sii_resets_is_verified(self):
+        crusher = self.make_participant('crusher')
+        crusher.store_identity_info(self.TTO, 'nothing-enforced', {'name': 'Crusher'})
+        assert [x.is_verified for x in crusher.list_identity_metadata()] == [False]  # starts False
+        crusher.set_identity_verification(self.TTO, True)
+        assert [x.is_verified for x in crusher.list_identity_metadata()] == [True]   # can be set
+        crusher.store_identity_info(self.TTO, 'nothing-enforced', {'name': 'Bruiser'})
+        assert [x.is_verified for x in crusher.list_identity_metadata()] == [False]  # is reset
 
     def test_sii_validates_identity(self):
         crusher = self.make_participant('crusher')
@@ -143,3 +181,61 @@ class Tests(Harness):
     def test__vi_chokes_on_unknown_schema(self):
         err = raises(ParticipantIdentitySchemaUnknown, _validate_info, 'floo-floo', {'foo': 'bar'})
         assert err.value.message == "unknown schema 'floo-floo'"
+
+
+    # siv - set_identity_verification
+
+    def test_is_verified_defaults_to_false(self):
+        crusher = self.make_participant('crusher')
+        crusher.store_identity_info(self.TTO, 'nothing-enforced', {'name': 'Crusher'})
+        assert [x.is_verified for x in crusher.list_identity_metadata()] == [False]
+
+    def test_siv_sets_identity_verification(self):
+        crusher = self.make_participant('crusher')
+        crusher.store_identity_info(self.TTO, 'nothing-enforced', {'name': 'Crusher'})
+        crusher.set_identity_verification(self.TTO, True)
+        assert [x.is_verified for x in crusher.list_identity_metadata()] == [True]
+
+    def test_siv_can_set_identity_verification_back_to_false(self):
+        crusher = self.make_participant('crusher')
+        crusher.store_identity_info(self.TTO, 'nothing-enforced', {'name': 'Crusher'})
+        crusher.set_identity_verification(self.TTO, True)
+        crusher.set_identity_verification(self.TTO, False)
+        assert [x.is_verified for x in crusher.list_identity_metadata()] == [False]
+
+    def test_siv_is_a_noop_when_there_is_no_identity(self):
+        crusher = self.make_participant('crusher')
+        assert crusher.set_identity_verification(self.TTO, True) is None
+        assert crusher.set_identity_verification(self.TTO, False) is None
+        assert [x.is_verified for x in crusher.list_identity_metadata()] == []
+
+    def test_siv_logs_event_when_successful(self):
+        crusher = self.make_participant('crusher')
+        iid = crusher.store_identity_info(self.TTO, 'nothing-enforced', {'name': 'Crusher'})
+        crusher.set_identity_verification(self.TTO, True) is None
+        self.assert_events( crusher.id
+                          , [iid, iid]
+                          , [self.TTO, self.TTO]
+                          , ['insert identity', 'verify identity']
+                           )
+
+    def test_siv_logs_event_when_set_to_false(self):
+        crusher = self.make_participant('crusher')
+        iid = crusher.store_identity_info(self.TTO, 'nothing-enforced', {'name': 'Crusher'})
+        crusher.set_identity_verification(self.TTO, True) is None
+        crusher.set_identity_verification(self.TTO, False) is None
+        self.assert_events( crusher.id
+                          , [iid, iid, iid]
+                          , [self.TTO, self.TTO, self.TTO]
+                          , ['insert identity', 'verify identity', 'unverify identity']
+                           )
+
+    def test_siv_still_logs_an_event_when_noop(self):
+        crusher = self.make_participant('crusher')
+        crusher.set_identity_verification(self.TTO, True)
+        crusher.set_identity_verification(self.TTO, False)
+        self.assert_events( crusher.id
+                          , [None, None]
+                          , [self.TTO, self.TTO]
+                          , ['verify identity', 'unverify identity']
+                           )
