@@ -14,6 +14,7 @@ CREATE TABLE participant_identities
 , schema_name       text            NOT NULL
 , info              bytea           NOT NULL
 , _info_last_keyed  timestamptz     NOT NULL DEFAULT now()
+, is_verified       boolean         NOT NULL DEFAULT false
 , UNIQUE(participant_id, country_id)
  );
 
