@@ -1,4 +1,4 @@
-"""Participants on Gratipay give payments and take payroll.
+"""Participants on Gratipay give and take payments.
 """
 from __future__ import print_function, unicode_literals
 
@@ -1590,7 +1590,7 @@ class Participant(Model):
 
         # Key: taking
         # Values:
-        #   3.00 - user takes this amount in payroll
+        #   3.00 - user takes this amount
         output['taking'] = str(self.taking)
         output['ntaking_from'] = self.ntaking_from
 
