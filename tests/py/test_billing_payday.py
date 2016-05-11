@@ -2,7 +2,6 @@ from __future__ import absolute_import, division, print_function, unicode_litera
 
 import os
 
-import balanced
 import braintree
 import mock
 import pytest
@@ -186,20 +185,6 @@ class TestPayday(BillingHarness):
         nusers = self.db.one("SELECT nusers FROM paydays")
         assert nusers == 1
 
-    @pytest.mark.xfail(reason="haven't migrated transfer_takes yet")
-    @mock.patch.object(Payday, 'fetch_card_holds')
-    @mock.patch('gratipay.billing.payday.create_card_hold')
-    def test_ncc_failing(self, cch, fch):
-        self.janet.set_tip_to(self.homer, 24)
-        fch.return_value = {}
-        cch.return_value = (None, 'oops')
-        payday = Payday.start()
-        before = self.fetch_payday()
-        assert before['ncc_failing'] == 0
-        payday.payin()
-        after = self.fetch_payday()
-        assert after['ncc_failing'] == 1
-
     @mock.patch('gratipay.billing.payday.log')
     def test_start_prepare(self, log):
         self.clear_tables()
@@ -373,29 +358,6 @@ class TestPayin(BillingHarness):
             assert holds[self.obama.id] is fake_hold
             assert hold.status == 'voided'
 
-    @pytest.mark.xfail(reason="Don't think we'll need this anymore since we aren't using balanced, "
-                              "leaving it here till I'm sure.")
-    @mock.patch('gratipay.billing.payday.CardHold')
-    @mock.patch('gratipay.billing.payday.cancel_card_hold')
-    def test_fetch_card_holds_handles_extra_holds(self, cancel, CardHold):
-        fake_hold = mock.MagicMock()
-        fake_hold.meta = {'participant_id': 0}
-        fake_hold.amount = 1061
-        fake_hold.save = mock.MagicMock()
-        CardHold.query.filter.return_value = [fake_hold]
-        for attr, state in (('failure_reason', 'failed'),
-                            ('voided_at', 'cancelled'),
-                            ('debit_href', 'captured')):
-            holds = Payday.fetch_card_holds(set())
-            assert fake_hold.meta['state'] == state
-            fake_hold.save.assert_called_with()
-            assert len(holds) == 0
-            setattr(fake_hold, attr, None)
-        holds = Payday.fetch_card_holds(set())
-        cancel.assert_called_with(fake_hold)
-        assert len(holds) == 0
-
-    @pytest.mark.xfail(reason="haven't migrated transfer_takes yet")
     @mock.patch('gratipay.billing.payday.log')
     def test_payin_cancels_uncaptured_holds(self, log):
         self.janet.set_tip_to(self.homer, 42)
@@ -515,23 +477,6 @@ class TestPayin(BillingHarness):
         payment = self.db.one("SELECT * FROM payments WHERE direction='to-participant'")
         assert payment.amount == D('0.51')
 
-    @pytest.mark.xfail(reason="haven't migrated_transfer_takes yet")
-    @mock.patch.object(Payday, 'fetch_card_holds')
-    def test_transfer_takes_doesnt_make_negative_transfers(self, fch):
-        hold = balanced.CardHold(amount=1500, meta={'participant_id': self.janet.id},
-                                 card_href=self.card_href)
-        hold.capture = lambda *a, **kw: None
-        hold.save = lambda *a, **kw: None
-        fch.return_value = {self.janet.id: hold}
-        self.janet.update_number('plural')
-        self.janet.set_tip_to(self.homer, 10)
-        self.janet.add_member(self.david)
-        Payday.start().payin()
-        assert P('david').balance == 0
-        assert P('homer').balance == 10
-        assert P('janet').balance == 0
-
-    @pytest.mark.xfail(reason="haven't migrated take_over_balances yet")
     def test_take_over_during_payin(self):
         alice = self.make_participant('alice', claimed_time='now', balance=50)
         bob = self.make_participant('bob', claimed_time='now', elsewhere='twitter')
