@@ -9,7 +9,7 @@ import pytest
 from gratipay.billing.exchanges import create_card_hold, MINIMUM_CHARGE
 from gratipay.billing.payday import NoPayday, Payday
 from gratipay.exceptions import NegativeBalance
-from gratipay.models.participant import Participant
+from gratipay.models.participant import Participant, WontTakeOverWithIdentities
 from gratipay.models.team.mixins.takes import NotAllowed
 from gratipay.testing import Foobar, D,P
 from gratipay.testing.billing import BillingHarness
@@ -490,7 +490,11 @@ class TestPayin(BillingHarness):
 
             # bruce takes over picard
             bruce = self.make_participant('bruce', claimed_time='now')
-            bruce.take_over(('github', str(picard.id)), have_confirmation=True)
+            pytest.raises( WontTakeOverWithIdentities
+                         , bruce.take_over
+                         , ('github', str(picard.id))
+                         , have_confirmation=True
+                          )
             payday.process_payment_instructions(cursor)
 
             # billy takes over bruce
